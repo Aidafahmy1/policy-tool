@@ -1,0 +1,577 @@
+'use client';
+
+import { useState } from 'react';
+import { supabase, Message, Attachment } from '@/lib/supabase';
+import { Packer } from 'docx';
+import { generateManualDocument, ManualData } from '@/lib/generateDocx';
+
+interface SwimlaneDataType {
+  title: string;
+  lanes: Array<{
+    name: string;
+    steps: Array<{
+      id: string;
+      label: string;
+      type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess';
+      x: number;
+    }>;
+  }>;
+  connections: Array<{
+    from: string;
+    to: string;
+    label?: string;
+  }>;
+}
+
+interface ManualGeneratorProps {
+  conversationId: string | null;
+  mermaidCode: string | null;
+  swimlaneData?: SwimlaneDataType | null;
+  uploadedImageBase64?: string | null;
+  processName?: string | null;
+}
+
+// Generate SVG string directly for reliable capture
+// Escape special XML characters
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function generateSVGString(data: SwimlaneDataType): { svg: string; width: number; height: number } {
+  const LANE_HEIGHT = 140;
+  const LANE_HEADER_WIDTH = 90;
+  const CELL_WIDTH = 210;
+  const SHAPE_WIDTH = 120;
+  const SHAPE_HEIGHT = 50;
+  const HEADER_HEIGHT = 40;
+  const DECISION_SIZE = 56;
+  const GAP = 14;
+
+  // Calculate dimensions & step numbers
+  let maxX = 0;
+  const stepPositions: Record<string, { laneIndex: number; x: number }> = {};
+  const stepNumbers: Record<string, number> = {};
+  
+  data.lanes.forEach((lane, laneIndex) => {
+    lane.steps.forEach((step) => {
+      maxX = Math.max(maxX, step.x);
+      stepPositions[step.id] = { laneIndex, x: step.x };
+    });
+  });
+  
+  // Assign step numbers (left-to-right, top-to-bottom)
+  let stepNum = 1;
+  const allSteps = data.lanes.flatMap((lane, laneIndex) =>
+    lane.steps.map(step => ({ ...step, laneIndex }))
+  );
+  allSteps.sort((a, b) => a.x - b.x || a.laneIndex - b.laneIndex);
+  for (const step of allSteps) {
+    if (step.type !== 'start' && step.type !== 'end') {
+      stepNumbers[step.id] = stepNum++;
+    }
+  }
+  
+  const maxColumns = maxX + 1;
+  const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
+  const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
+
+  const getPos = (stepId: string) => {
+    const pos = stepPositions[stepId];
+    if (!pos) return null;
+    return {
+      x: LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2),
+      y: HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2),
+    };
+  };
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">`;
+  svg += `<rect width="100%" height="100%" fill="white"/>`;
+  
+  // Title
+  svg += `<rect x="0" y="0" width="${svgWidth}" height="${HEADER_HEIGHT}" fill="#059669"/>`;
+  svg += `<text x="${svgWidth / 2}" y="${HEADER_HEIGHT / 2 + 6}" text-anchor="middle" fill="white" font-size="18" font-family="Arial, sans-serif" font-weight="bold">${escapeXml(data.title || 'Process Flowchart')}</text>`;
+
+  // Layer 1: Lane backgrounds
+  data.lanes.forEach((lane, laneIndex) => {
+    const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
+    svg += `<rect x="0" y="${laneY}" width="${LANE_HEADER_WIDTH}" height="${LANE_HEIGHT}" fill="#059669" stroke="#047857" stroke-width="1"/>`;
+    svg += `<text x="${LANE_HEADER_WIDTH / 2}" y="${laneY + LANE_HEIGHT / 2}" text-anchor="middle" fill="white" font-size="11" font-family="Arial, sans-serif" font-weight="600" transform="rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + LANE_HEIGHT / 2})">${escapeXml(lane.name)}</text>`;
+    svg += `<rect x="${LANE_HEADER_WIDTH}" y="${laneY}" width="${svgWidth - LANE_HEADER_WIDTH}" height="${LANE_HEIGHT}" fill="white" stroke="#d1d5db" stroke-width="1"/>`;
+  });
+
+  // Layer 2: Arrows (before shapes so shapes sit on top)
+  svg += `<defs>`;
+  svg += `<marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#6b7280"/></marker>`;
+  svg += `<marker id="ah-g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#16a34a"/></marker>`;
+  svg += `<marker id="ah-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#dc2626"/></marker>`;
+  svg += `</defs>`;
+
+  data.connections.forEach((conn) => {
+    const fromPos = getPos(conn.from);
+    const toPos = getPos(conn.to);
+    if (!fromPos || !toPos) return;
+
+    const dx = toPos.x - fromPos.x;
+    const dy = toPos.y - fromPos.y;
+    const fromStep = allSteps.find(s => s.id === conn.from);
+    const toStep = allSteps.find(s => s.id === conn.to);
+    const isFromDec = fromStep?.type === 'decision';
+    const fHW = isFromDec ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
+    const fHH = isFromDec ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
+    const tHW = toStep?.type === 'decision' ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
+    const tHH = toStep?.type === 'decision' ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
+    const isSameLane = Math.abs(dy) < LANE_HEIGHT / 2;
+    const isSameCol = Math.abs(dx) < CELL_WIDTH / 2;
+    const isYes = conn.label?.toLowerCase() === 'yes';
+    const isNo = conn.label?.toLowerCase() === 'no';
+
+    let path = '';
+    let lx = 0, ly = 0;
+
+    if (isFromDec && isYes) {
+      const sx = fromPos.x + fHW;
+      if (isSameLane && dx > 0) {
+        path = `M ${sx} ${fromPos.y} L ${toPos.x - tHW - GAP} ${toPos.y}`;
+      } else {
+        const mx = fromPos.x + CELL_WIDTH / 2;
+        path = `M ${sx} ${fromPos.y} L ${mx} ${fromPos.y} L ${mx} ${toPos.y} L ${toPos.x - tHW - GAP} ${toPos.y}`;
+      }
+      lx = sx + 14; ly = fromPos.y - 8;
+    } else if (isFromDec && isNo) {
+      const sy = fromPos.y + fHH;
+      if (isSameCol) {
+        path = `M ${fromPos.x} ${sy} L ${toPos.x} ${toPos.y - tHH - GAP}`;
+      } else if (dx < 0) {
+        const ry = Math.max(sy + GAP + 10, HEADER_HEIGHT + Math.max(stepPositions[conn.from]?.laneIndex ?? 0, stepPositions[conn.to]?.laneIndex ?? 0) * LANE_HEIGHT + LANE_HEIGHT - 8);
+        path = `M ${fromPos.x} ${sy} L ${fromPos.x} ${ry} L ${toPos.x} ${ry} L ${toPos.x} ${toPos.y + tHH + GAP}`;
+      } else {
+        const ry = sy + GAP + 15;
+        path = `M ${fromPos.x} ${sy} L ${fromPos.x} ${ry} L ${toPos.x} ${ry} L ${toPos.x} ${toPos.y - tHH - GAP}`;
+      }
+      lx = fromPos.x + 14; ly = fromPos.y + fHH + 14;
+    } else if (isSameLane && dx > 0) {
+      path = `M ${fromPos.x + fHW} ${fromPos.y} L ${toPos.x - tHW - GAP} ${toPos.y}`;
+      lx = (fromPos.x + fHW + toPos.x - tHW) / 2; ly = fromPos.y - 10;
+    } else if (isSameLane && dx < 0) {
+      const fromLI = stepPositions[conn.from]?.laneIndex ?? 0;
+      const ry = HEADER_HEIGHT + fromLI * LANE_HEIGHT + LANE_HEIGHT - 8;
+      path = `M ${fromPos.x - fHW} ${fromPos.y} L ${fromPos.x - fHW - GAP} ${fromPos.y} L ${fromPos.x - fHW - GAP} ${ry} L ${toPos.x + tHW + GAP} ${ry} L ${toPos.x + tHW + GAP} ${toPos.y} L ${toPos.x + tHW} ${toPos.y}`;
+      lx = (fromPos.x + toPos.x) / 2; ly = ry + 12;
+    } else if (isSameCol && dy > 0) {
+      path = `M ${fromPos.x} ${fromPos.y + fHH} L ${toPos.x} ${toPos.y - tHH - GAP}`;
+      lx = fromPos.x + 15; ly = (fromPos.y + fHH + toPos.y - tHH) / 2;
+    } else if (isSameCol && dy < 0) {
+      path = `M ${fromPos.x} ${fromPos.y - fHH} L ${toPos.x} ${toPos.y + tHH + GAP}`;
+      lx = fromPos.x + 15; ly = (fromPos.y - fHH + toPos.y + tHH) / 2;
+    } else if (dx > 0) {
+      const mx = (fromPos.x + toPos.x) / 2;
+      path = `M ${fromPos.x + fHW} ${fromPos.y} L ${mx} ${fromPos.y} L ${mx} ${toPos.y} L ${toPos.x - tHW - GAP} ${toPos.y}`;
+      lx = mx + 8; ly = Math.min(fromPos.y, toPos.y) - 8;
+    } else {
+      const fromLI = stepPositions[conn.from]?.laneIndex ?? 0;
+      const toLI = stepPositions[conn.to]?.laneIndex ?? 0;
+      const ry = HEADER_HEIGHT + (Math.max(fromLI, toLI) + 1) * LANE_HEIGHT - 8;
+      path = `M ${fromPos.x} ${fromPos.y + fHH} L ${fromPos.x} ${ry} L ${toPos.x} ${ry} L ${toPos.x} ${toPos.y + tHH + GAP}`;
+      lx = (fromPos.x + toPos.x) / 2; ly = ry - 8;
+    }
+
+    const sc = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
+    const me = isYes ? 'url(#ah-g)' : isNo ? 'url(#ah-r)' : 'url(#ah)';
+    svg += `<path d="${path}" fill="none" stroke="${sc}" stroke-width="1.5" marker-end="${me}"/>`;
+    if (conn.label) {
+      const bg = isYes ? '#dcfce7' : isNo ? '#fee2e2' : 'white';
+      const bc = isYes ? '#16a34a' : isNo ? '#dc2626' : '#d1d5db';
+      const tc = isYes ? '#15803d' : isNo ? '#dc2626' : '#374151';
+      svg += `<rect x="${lx - 16}" y="${ly - 10}" width="32" height="16" fill="${bg}" stroke="${bc}" stroke-width="1" rx="3"/>`;
+      svg += `<text x="${lx}" y="${ly + 2}" text-anchor="middle" fill="${tc}" font-size="10" font-family="Arial, sans-serif" font-weight="700">${escapeXml(conn.label)}</text>`;
+    }
+  });
+
+  // Layer 3: Shapes (on top of arrows)
+  data.lanes.forEach((lane) => {
+    lane.steps.forEach((step) => {
+      const pos = getPos(step.id);
+      if (!pos) return;
+      const cx = pos.x, cy = pos.y;
+      const halfW = SHAPE_WIDTH / 2, halfH = SHAPE_HEIGHT / 2;
+      const num = stepNumbers[step.id];
+      const escapedLabel = escapeXml(step.label);
+
+      if (step.type === 'start' || step.type === 'end') {
+        svg += `<rect x="${cx - halfW}" y="${cy - halfH}" width="${SHAPE_WIDTH}" height="${SHAPE_HEIGHT}" rx="${SHAPE_HEIGHT / 2}" fill="#047857" stroke="#065f46" stroke-width="1"/>`;
+        svg += `<text x="${cx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="11" font-family="Arial, sans-serif" font-weight="600">${escapedLabel}</text>`;
+      } else if (step.type === 'decision') {
+        const hd = DECISION_SIZE / 2;
+        svg += `<polygon points="${cx},${cy - hd} ${cx + hd},${cy} ${cx},${cy + hd} ${cx - hd},${cy}" fill="#059669" stroke="#047857" stroke-width="1.5"/>`;
+        svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="white" font-size="8" font-family="Arial, sans-serif" font-weight="600">${escapedLabel.length > 12 ? escapedLabel.slice(0, 12) + '..' : escapedLabel}</text>`;
+        if (num) {
+          svg += `<circle cx="${cx - hd + 10}" cy="${cy - hd + 10}" r="8" fill="#047857" stroke="white" stroke-width="1.5"/>`;
+          svg += `<text x="${cx - hd + 10}" y="${cy - hd + 13}" text-anchor="middle" fill="white" font-size="7" font-family="Arial, sans-serif" font-weight="700">${num}</text>`;
+        }
+      } else {
+        svg += `<rect x="${cx - halfW}" y="${cy - halfH}" width="${SHAPE_WIDTH}" height="${SHAPE_HEIGHT}" rx="4" fill="white" stroke="#059669" stroke-width="1.5"/>`;
+        svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="#1f2937" font-size="10" font-family="Arial, sans-serif" font-weight="500">${escapedLabel.length > 18 ? escapedLabel.slice(0, 18) + '..' : escapedLabel}</text>`;
+        if (num) {
+          svg += `<circle cx="${cx - halfW + 10}" cy="${cy - halfH + 10}" r="8" fill="#047857" stroke="white" stroke-width="1.5"/>`;
+          svg += `<text x="${cx - halfW + 10}" y="${cy - halfH + 13}" text-anchor="middle" fill="white" font-size="7" font-family="Arial, sans-serif" font-weight="700">${num}</text>`;
+        }
+      }
+    });
+  });
+
+  svg += '</svg>';
+  return { svg, width: svgWidth, height: svgHeight };
+}
+
+// Convert SVG string to PNG base64
+async function svgToPng(svgString: string, width: number, height: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    const scale = 2;
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) {
+      reject(new Error('Could not get canvas context'));
+      return;
+    }
+    
+    // Fill white background
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+    
+    const img = new Image();
+    
+    // Use Blob URL instead of base64 for better compatibility
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/png', 1.0));
+    };
+    
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      console.error('SVG load error:', e);
+      reject(new Error('Failed to load SVG image'));
+    };
+    
+    img.src = url;
+  });
+}
+
+export default function ManualGenerator({
+  conversationId,
+  mermaidCode,
+  swimlaneData,
+  uploadedImageBase64,
+  processName: propProcessName,
+}: ManualGeneratorProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [manualData, setManualData] = useState<ManualData | null>(null);
+  const [orgStructure, setOrgStructure] = useState<string>('');
+  const [orgStructureImageBase64, setOrgStructureImageBase64] = useState<string | null>(null);
+  const [showOrgInput, setShowOrgInput] = useState(false);
+  const [customInstructions, setCustomInstructions] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGenerateManual = async () => {
+    // Check if we have an uploaded image OR a conversation diagram
+    const hasUploadedImage = uploadedImageBase64;
+    const hasConversationDiagram = conversationId && mermaidCode;
+    
+    if (!hasUploadedImage && !hasConversationDiagram) {
+      setError('Please upload a flowchart image first');
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      // If we have an uploaded image, use the direct image-to-manual API
+      if (hasUploadedImage) {
+        const response = await fetch('/api/generate-manual-from-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: uploadedImageBase64,
+            customInstructions: customInstructions.trim() || undefined,
+            orgStructure: orgStructure.trim() || undefined,
+            orgStructureImageBase64: orgStructureImageBase64 || undefined,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          setError(data.error);
+          setIsGenerating(false);
+          return;
+        }
+
+        setManualData(data.manual);
+      } else {
+        // Fallback to conversation-based manual generation
+        let messages: Array<{ role: string; content: string }> = [];
+        let orgData = orgStructure;
+
+        if (conversationId) {
+          const { data: dbMessages } = await supabase
+            .from('messages')
+            .select('*')
+            .eq('conversation_id', conversationId)
+            .order('created_at', { ascending: true });
+
+          if (dbMessages && dbMessages.length > 0) {
+            messages = dbMessages.map((m) => ({ role: m.role, content: m.content }));
+          }
+        }
+
+        if (customInstructions.trim()) {
+          messages.push({
+            role: 'user',
+            content: `ADDITIONAL INSTRUCTIONS FOR THE MANUAL:\n${customInstructions}`
+          });
+        }
+
+        const response = await fetch('/api/generate-manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages,
+            mermaidCode,
+            orgStructure: orgData,
+            swimlaneData: swimlaneData,
+            processName: swimlaneData?.title || propProcessName,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          setError(data.error);
+          setIsGenerating(false);
+          return;
+        }
+
+        setManualData(data.manual);
+      }
+    } catch (err) {
+      console.error('Error generating manual:', err);
+      setError('Failed to generate manual');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleDownloadDocx = async () => {
+    if (!manualData) return;
+
+    try {
+      let diagramImageBase64: string | undefined;
+      
+      // If user uploaded an image, use it directly (don't generate a new one)
+      if (uploadedImageBase64) {
+        diagramImageBase64 = uploadedImageBase64;
+        console.log('Using uploaded image directly');
+      } else if (swimlaneData) {
+        // Only generate SVG if no uploaded image (i.e., diagram was created via chat)
+        try {
+          const { svg, width, height } = generateSVGString(swimlaneData);
+          diagramImageBase64 = await svgToPng(svg, width, height);
+          console.log('Diagram generated from swimlane data:', diagramImageBase64.length, 'chars');
+        } catch (imgError) {
+          console.error('Error generating diagram image:', imgError);
+        }
+      }
+      
+      // Generate document
+      const doc = generateManualDocument(manualData, diagramImageBase64);
+      const blob = await Packer.toBlob(doc);
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${manualData.processName.replace(/\s+/g, '_')}_Manual.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading document:', err);
+      setError('Failed to download document');
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    
+    // Check if it's an image file
+    if (file.type.startsWith('image/')) {
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        setOrgStructureImageBase64(base64);
+        setOrgStructure(''); // Clear text if image is uploaded
+      };
+      reader.readAsDataURL(file);
+    } else {
+      // Text file
+      reader.onload = (event) => {
+        setOrgStructure(event.target?.result as string);
+        setOrgStructureImageBase64(null); // Clear image if text is uploaded
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  // Check if we can generate a manual - either from uploaded image or conversation
+  const canGenerateManual = uploadedImageBase64 || (conversationId && mermaidCode);
+  
+  if (!canGenerateManual) {
+    return (
+      <div className="p-4 bg-gray-100 rounded-lg text-center text-gray-500">
+        <p>Upload a flowchart image to generate a manual</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 bg-white rounded-lg border border-gray-200">
+      <h3 className="text-lg font-semibold text-gray-800 mb-4">
+        Generate Process Manual
+      </h3>
+
+      {/* Custom Instructions */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Custom Instructions (Optional)
+        </label>
+        <textarea
+          value={customInstructions}
+          onChange={(e) => setCustomInstructions(e.target.value)}
+          placeholder="Add any specific requests for the manual, e.g.:
+• Include specific compliance requirements
+• Add detailed descriptions for certain steps
+• Specify particular stakeholder responsibilities
+• Request specific formatting or sections"
+          className="w-full h-28 p-3 text-sm text-gray-900 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 placeholder:text-gray-400"
+        />
+      </div>
+
+      {/* Org Structure Input */}
+      <div className="mb-4">
+        <button
+          onClick={() => setShowOrgInput(!showOrgInput)}
+          className="text-sm text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+        >
+          {showOrgInput ? '▼' : '▶'} Add Organization Structure (Optional)
+        </button>
+
+        {showOrgInput && (
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-gray-500">
+              Upload an org chart image or paste text to auto-assign people to roles
+            </p>
+            <input
+              type="file"
+              accept=".txt,.csv,.json,.png,.jpg,.jpeg,.gif,.webp"
+              onChange={handleFileUpload}
+              className="text-sm"
+            />
+            {orgStructureImageBase64 && (
+              <div className="relative">
+                <img 
+                  src={orgStructureImageBase64} 
+                  alt="Org Structure" 
+                  className="max-h-32 rounded border border-gray-300"
+                />
+                <button
+                  onClick={() => setOrgStructureImageBase64(null)}
+                  className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center hover:bg-red-600"
+                >
+                  ×
+                </button>
+                <p className="text-xs text-green-600 mt-1">✓ Org chart image uploaded</p>
+              </div>
+            )}
+            {!orgStructureImageBase64 && (
+              <textarea
+                value={orgStructure}
+                onChange={(e) => setOrgStructure(e.target.value)}
+                placeholder="Or paste org structure here (e.g., CEO: John Smith, CFO: Jane Doe...)"
+                className="w-full h-24 p-2 text-sm text-gray-900 border border-gray-300 rounded resize-none placeholder:text-gray-400"
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Generate Button */}
+      <button
+        onClick={handleGenerateManual}
+        disabled={isGenerating}
+        className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {isGenerating ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            Generating Manual...
+          </>
+        ) : (
+          <>📄 Generate Manual</>
+        )}
+      </button>
+
+      {error && (
+        <div className="mt-2 p-2 bg-red-50 text-red-600 text-sm rounded">
+          {error}
+        </div>
+      )}
+
+      {/* Manual Preview */}
+      {manualData && (
+        <div className="mt-4 space-y-4">
+          <div className="p-4 bg-gray-50 rounded-lg max-h-64 overflow-y-auto">
+            <h4 className="font-semibold text-emerald-700 mb-2">
+              {manualData.processName}
+            </h4>
+            <p className="text-sm text-gray-600 mb-2">
+              <strong>Objectives:</strong> {manualData.processObjectives || manualData.processOverview?.purpose || ''}
+            </p>
+            <p className="text-sm text-gray-600 mb-2">
+              <strong>Stakeholders:</strong>{' '}
+              {Array.isArray(manualData.stakeholders) 
+                ? manualData.stakeholders.map((s: string | { role: string }) => typeof s === 'string' ? s : s.role).join(', ')
+                : ''}
+            </p>
+            <p className="text-sm text-gray-600">
+              <strong>Steps:</strong> {manualData.processSteps.length} process
+              steps with RACI assignments
+            </p>
+          </div>
+
+          <button
+            onClick={handleDownloadDocx}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+          >
+            📥 Download Word Document
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
