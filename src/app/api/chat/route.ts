@@ -112,6 +112,9 @@ When the user uploads an org structure document (org chart, hierarchy, employee 
 
 Be conversational and helpful. Guide the user through building their process step by step.`;
 
+// Increase timeout for AI API calls (Vercel default is 10s)
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   try {
     const { messages, attachments, uploadedImageBase64, currentSwimlaneData } = await request.json();
@@ -174,12 +177,8 @@ export async function POST(request: NextRequest) {
     }
 
     const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-5',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 16000,
-      thinking: {
-        type: 'enabled',
-        budget_tokens: 8000,
-      },
       system: SYSTEM_PROMPT
         + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nWhen the user asks to modify, update, add, remove, or change steps/connections/labels in the flowchart, you MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes while preserving everything else. Keep the same step IDs for unchanged steps so the layout stays consistent. Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')
         + (uploadedImageBase64 ? `\n\nIMPORTANT — UPLOADED FLOWCHART IMAGE:
@@ -219,8 +218,10 @@ The user has uploaded a flowchart/process diagram image. You MUST:
     });
   } catch (error) {
     console.error('Chat API error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error details:', errorMessage);
     return NextResponse.json(
-      { error: 'Failed to process chat message' },
+      { error: `Failed to generate response: ${errorMessage}` },
       { status: 500 }
     );
   }
