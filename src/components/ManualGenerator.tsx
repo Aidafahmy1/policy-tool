@@ -29,6 +29,7 @@ interface ManualGeneratorProps {
   swimlaneData?: SwimlaneDataType | null;
   uploadedImageBase64?: string | null;
   processName?: string | null;
+  svgRef?: React.RefObject<SVGSVGElement | null>;
 }
 
 // Generate SVG string directly for reliable capture
@@ -275,6 +276,7 @@ export default function ManualGenerator({
   swimlaneData,
   uploadedImageBase64,
   processName: propProcessName,
+  svgRef,
 }: ManualGeneratorProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [manualData, setManualData] = useState<ManualData | null>(null);
@@ -335,6 +337,27 @@ export default function ManualGenerator({
           if (dbMessages && dbMessages.length > 0) {
             messages = dbMessages.map((m) => ({ role: m.role, content: m.content }));
           }
+
+          // Auto-load org structure from chat attachments if user hasn't manually provided one
+          if (!orgData.trim()) {
+            const { data: chatAttachments } = await supabase
+              .from('attachments')
+              .select('file_name, file_content')
+              .eq('conversation_id', conversationId);
+
+            if (chatAttachments && chatAttachments.length > 0) {
+              // Look for org structure documents in attachments
+              const orgKeywords = ['org', 'structure', 'hierarchy', 'department', 'role', 'position', 'chart', 'raci', 'stakeholder', 'team'];
+              for (const att of chatAttachments) {
+                const nameLC = att.file_name.toLowerCase();
+                const contentLC = (att.file_content || '').toLowerCase().slice(0, 500);
+                const isOrgDoc = orgKeywords.some(kw => nameLC.includes(kw) || contentLC.includes(kw));
+                if (isOrgDoc && att.file_content) {
+                  orgData += (orgData ? '\n\n' : '') + `--- ${att.file_name} ---\n${att.file_content}`;
+                }
+              }
+            }
+          }
         }
 
         if (customInstructions.trim()) {
@@ -385,11 +408,25 @@ export default function ManualGenerator({
         diagramImageBase64 = uploadedImageBase64;
         console.log('Using uploaded image directly');
       } else if (swimlaneData) {
-        // Only generate SVG if no uploaded image (i.e., diagram was created via chat)
+        // Prefer capturing the live SVG (includes drag modifications) over regenerating
         try {
-          const { svg, width, height } = generateSVGString(swimlaneData);
-          diagramImageBase64 = await svgToPng(svg, width, height);
-          console.log('Diagram generated from swimlane data:', diagramImageBase64.length, 'chars');
+          if (svgRef?.current) {
+            const svgEl = svgRef.current;
+            // Clone and strip UI-only elements for clean export
+            const svgClone = svgEl.cloneNode(true) as SVGSVGElement;
+            svgClone.querySelectorAll('[data-no-export]').forEach(el => el.remove());
+            svgClone.querySelectorAll('foreignObject').forEach(el => el.remove());
+            const serializer = new XMLSerializer();
+            const svgString = serializer.serializeToString(svgClone);
+            const w = svgEl.width.baseVal.value || svgEl.viewBox.baseVal.width;
+            const h = svgEl.height.baseVal.value || svgEl.viewBox.baseVal.height;
+            diagramImageBase64 = await svgToPng(svgString, w, h);
+            console.log('Diagram captured from live SVG (with edits):', diagramImageBase64.length, 'chars');
+          } else {
+            const { svg, width, height } = generateSVGString(swimlaneData);
+            diagramImageBase64 = await svgToPng(svg, width, height);
+            console.log('Diagram generated from swimlane data:', diagramImageBase64.length, 'chars');
+          }
         } catch (imgError) {
           console.error('Error generating diagram image:', imgError);
         }
@@ -488,7 +525,7 @@ export default function ManualGenerator({
             </p>
             <input
               type="file"
-              accept=".txt,.csv,.json,.png,.jpg,.jpeg,.gif,.webp"
+              accept=".txt,.csv,.json,.md,.tsv,.xml,.xlsx,.xls,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp"
               onChange={handleFileUpload}
               className="text-sm"
             />

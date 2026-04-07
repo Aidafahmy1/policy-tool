@@ -101,11 +101,20 @@ DECISION POINT RULES (CRITICAL):
 
 If the user uploads context documents (ERP data, org structure), incorporate that information into the process design.
 
+ORGANIZATION STRUCTURE HANDLING:
+When the user uploads an org structure document (org chart, hierarchy, employee list, department list, RACI reference, etc.):
+1. Acknowledge that you received and understood the org structure
+2. Parse ALL roles, titles, departments, and reporting lines from the document
+3. When generating flowcharts, use the ACTUAL department/role names from the org structure as swimlane names (e.g., if org has "Supply Chain Planning Department" use that instead of generic "Planning")
+4. Remember the org structure for the entire conversation — it applies to all future flowcharts and modifications
+5. When the user later asks for a manual or RACI, the org structure roles should be used for accurate RACI assignments
+6. If the org structure contains specific people's names, note them but use role/title names for swimlanes (e.g., "CFO" not "John Smith")
+
 Be conversational and helpful. Guide the user through building their process step by step.`;
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, attachments, uploadedImageBase64 } = await request.json();
+    const { messages, attachments, uploadedImageBase64, currentSwimlaneData } = await request.json();
 
     // Build context from attachments if any
     let contextMessage = '';
@@ -171,7 +180,16 @@ export async function POST(request: NextRequest) {
         type: 'enabled',
         budget_tokens: 8000,
       },
-      system: SYSTEM_PROMPT + (uploadedImageBase64 ? '\n\nIMPORTANT: The user has uploaded a flowchart image. When they ask questions, analyze the image carefully and provide accurate information based on what you see in the flowchart. You can discuss the process steps, stakeholders, flow, and suggest improvements for the manual generation.' : ''),
+      system: SYSTEM_PROMPT
+        + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nWhen the user asks to modify, update, add, remove, or change steps/connections/labels in the flowchart, you MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes while preserving everything else. Keep the same step IDs for unchanged steps so the layout stays consistent. Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')
+        + (uploadedImageBase64 ? `\n\nIMPORTANT — UPLOADED FLOWCHART IMAGE:
+The user has uploaded a flowchart/process diagram image. You MUST:
+1. Carefully analyze the image to identify all process steps, decision points, roles/departments (swimlanes), and connections.
+2. Describe what you see in the flowchart so the user knows you understood it.
+3. When the user asks for suggestions or improvements, provide concrete, actionable recommendations (e.g., missing steps, unclear decision paths, missing roles, compliance gaps, efficiency improvements).
+4. If the user asks you to recreate or convert the flowchart, generate BOTH a \`\`\`mermaid\`\`\` block AND a \`\`\`swimlane-json\`\`\` block that faithfully reproduces the uploaded diagram as an editable flowchart. Preserve the original structure but you may improve layout and clarity.
+5. The image is available for ALL messages in this conversation, so you can reference it in follow-up questions.
+6. You can proactively offer to recreate the flowchart as an editable diagram if the user hasn't asked yet.` : ''),
       messages: apiMessages,
     });
     const response = await stream.finalMessage();

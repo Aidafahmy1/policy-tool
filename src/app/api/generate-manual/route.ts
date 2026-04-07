@@ -137,7 +137,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (orgStructure) {
-      contextMessage += `ORGANIZATION STRUCTURE:\n${orgStructure}\n\nUse this org structure to assign specific people to roles in the process.\n\n`;
+      contextMessage += `\n===== ORGANIZATION STRUCTURE =====\n${orgStructure}\n\n`;
+      contextMessage += `===== ORG STRUCTURE → RACI MAPPING INSTRUCTIONS =====\n`;
+      contextMessage += `Cross-reference the organization structure above with the swimlane roles from the flowchart.\n`;
+      contextMessage += `For each process step:\n`;
+      contextMessage += `- "responsible" = The swimlane title where the step physically sits (this is the role DOING the work)\n`;
+      contextMessage += `- "accountable" = Find the SENIOR/MANAGER role from the org structure that OVERSEES this swimlane's area. Example:\n`;
+      contextMessage += `    • If swimlane is "Finance" and org has "CFO: John Smith" → accountable = "CFO"\n`;
+      contextMessage += `    • If swimlane is "Supply Chain" and org has "VP Supply Chain: Sara Jones" → accountable = "VP Supply Chain"\n`;
+      contextMessage += `    • If swimlane is "Planning" and org has "Planning Manager: Ali Hassan" → accountable = "Planning Manager"\n`;
+      contextMessage += `- "consulted" = Other roles from the org structure or swimlanes that should provide input BEFORE the step executes\n`;
+      contextMessage += `- "informed" = Roles from the org structure that need to be NOTIFIED after the step completes\n\n`;
+      contextMessage += `CRITICAL: Use the ACTUAL role titles from the org structure (e.g., "CFO", "VP Sales", "Planning Manager"), NOT generic terms like "Management" or "Senior Leadership".\n`;
+      contextMessage += `If the org structure lists specific people (e.g., "CFO: John Smith"), use the ROLE TITLE ("CFO") not the person's name.\n`;
+      contextMessage += `Map EVERY swimlane to the most relevant org structure roles for accurate RACI assignments.\n\n`;
     }
 
     if (messages && messages.length > 0) {

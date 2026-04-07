@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useMemo } from 'react';
+import { forwardRef, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 
 export interface ProcessStep {
   id: string;
@@ -28,6 +28,7 @@ export interface SwimlaneData {
 
 interface SwimlaneSVGProps {
   data: SwimlaneData;
+  onLayoutChange?: (offsets: Record<string, {dx: number, dy: number}>) => void;
 }
 
 // Dimensions with extra spacing to avoid arrow-shape overlap
@@ -41,8 +42,159 @@ const DECISION_SIZE = 56;
 const ARROW_GAP = 14; // min gap between arrow and shape edge
 
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
-  ({ data }, ref) => {
-    
+  ({ data, onLayoutChange }, ref) => {
+    const svgRef = useRef<SVGSVGElement | null>(null);
+
+    // Combine forwarded ref with internal ref
+    const combinedRef = useCallback((node: SVGSVGElement | null) => {
+      svgRef.current = node;
+      if (typeof ref === 'function') ref(node);
+      else if (ref) (ref as React.MutableRefObject<SVGSVGElement | null>).current = node;
+    }, [ref]);
+
+    // Interactive state: shape position offsets from dragging
+    const [posOffsets, setPosOffsets] = useState<Record<string, {dx: number, dy: number}>>({});
+    // Arrow waypoint overrides (full path points per connection)
+    const [arrowOverrides, setArrowOverrides] = useState<Record<string, {x: number, y: number}[]>>({});
+    // Label text overrides from inline editing
+    const [labelOverrides, setLabelOverrides] = useState<Record<string, string>>({});
+    const [editingStepId, setEditingStepId] = useState<string | null>(null);
+    const [editText, setEditText] = useState('');
+    const editInputRef = useRef<HTMLTextAreaElement | null>(null);
+    const [dragInfo, setDragInfo] = useState<{
+      type: 'shape';
+      stepId: string;
+      startMouse: {x: number, y: number};
+      startOffset: {dx: number, dy: number};
+    } | {
+      type: 'waypoint';
+      connKey: string;
+      wpIdx: number;
+      startMouse: {x: number, y: number};
+      startPoint: {x: number, y: number};
+    } | null>(null);
+
+    // Reset offsets when flowchart data changes
+    useEffect(() => {
+      setPosOffsets({});
+      setArrowOverrides({});
+      setLabelOverrides({});
+      setEditingStepId(null);
+    }, [data]);
+
+    // Convert screen coordinates to SVG coordinates
+    const screenToSVG = useCallback((clientX: number, clientY: number) => {
+      const svg = svgRef.current;
+      if (!svg) return { x: clientX, y: clientY };
+      const pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return { x: clientX, y: clientY };
+      const svgPt = pt.matrixTransform(ctm.inverse());
+      return { x: svgPt.x, y: svgPt.y };
+    }, []);
+
+    // Parse SVG path "M x y L x y ..." into coordinate points
+    const parsePath = (d: string): {x: number, y: number}[] => {
+      const points: {x: number, y: number}[] = [];
+      const re = /[ML]\s*([\d.e+-]+)\s+([\d.e+-]+)/g;
+      let m;
+      while ((m = re.exec(d)) !== null) {
+        points.push({ x: parseFloat(m[1]), y: parseFloat(m[2]) });
+      }
+      return points;
+    };
+
+    // Build SVG path string from coordinate points
+    const buildPath = (points: {x: number, y: number}[]): string => {
+      if (points.length === 0) return '';
+      return `M ${points[0].x} ${points[0].y}` + points.slice(1).map(p => ` L ${p.x} ${p.y}`).join('');
+    };
+
+    // Double-click on shape to enter inline text edit mode
+    const handleShapeDoubleClick = useCallback((e: React.MouseEvent, stepId: string, currentLabel: string) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setEditingStepId(stepId);
+      setEditText(currentLabel);
+      // Auto-focus after render
+      setTimeout(() => editInputRef.current?.focus(), 50);
+    }, []);
+
+    // Save edited label
+    const handleEditSave = useCallback(() => {
+      if (editingStepId && editText.trim()) {
+        setLabelOverrides(prev => ({ ...prev, [editingStepId]: editText.trim() }));
+      }
+      setEditingStepId(null);
+    }, [editingStepId, editText]);
+
+    // Pointer-down on a shape starts shape drag (skip if editing)
+    const handleShapePointerDown = useCallback((e: React.PointerEvent, stepId: string) => {
+      if (editingStepId) return; // don't drag while editing
+      e.stopPropagation();
+      const svgPt = screenToSVG(e.clientX, e.clientY);
+      const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
+      setDragInfo({ type: 'shape', stepId, startMouse: svgPt, startOffset: { ...offset } });
+    }, [screenToSVG, posOffsets, editingStepId]);
+
+    // Pointer-down on an arrow waypoint starts waypoint drag
+    const handleWaypointPointerDown = useCallback((e: React.PointerEvent, connKey: string, wpIdx: number, currentPoints: {x: number, y: number}[]) => {
+      e.stopPropagation();
+      const svgPt = screenToSVG(e.clientX, e.clientY);
+      const point = currentPoints[wpIdx];
+      // Initialize overrides from current path if not yet customized
+      if (!arrowOverrides[connKey]) {
+        setArrowOverrides(prev => ({ ...prev, [connKey]: currentPoints.map(p => ({ ...p })) }));
+      }
+      setDragInfo({ type: 'waypoint', connKey, wpIdx, startMouse: svgPt, startPoint: { ...point } });
+    }, [screenToSVG, arrowOverrides]);
+
+    // Window-level pointer events for reliable drag tracking (works even if cursor leaves SVG)
+    useEffect(() => {
+      if (!dragInfo) return;
+      const handleMove = (e: PointerEvent) => {
+        e.preventDefault();
+        const svgPt = screenToSVG(e.clientX, e.clientY);
+        if (dragInfo.type === 'shape') {
+          setPosOffsets(prev => ({
+            ...prev,
+            [dragInfo.stepId]: {
+              dx: dragInfo.startOffset.dx + (svgPt.x - dragInfo.startMouse.x),
+              dy: dragInfo.startOffset.dy + (svgPt.y - dragInfo.startMouse.y),
+            }
+          }));
+        } else if (dragInfo.type === 'waypoint') {
+          setArrowOverrides(prev => {
+            const points = [...(prev[dragInfo.connKey] || [])];
+            points[dragInfo.wpIdx] = {
+              x: dragInfo.startPoint.x + (svgPt.x - dragInfo.startMouse.x),
+              y: dragInfo.startPoint.y + (svgPt.y - dragInfo.startMouse.y),
+            };
+            return { ...prev, [dragInfo.connKey]: points };
+          });
+        }
+      };
+      const handleUp = () => {
+        setDragInfo(null);
+      };
+      window.addEventListener('pointermove', handleMove);
+      window.addEventListener('pointerup', handleUp);
+      return () => {
+        window.removeEventListener('pointermove', handleMove);
+        window.removeEventListener('pointerup', handleUp);
+      };
+    }, [dragInfo, screenToSVG]);
+
+    const handleReset = useCallback(() => {
+      setPosOffsets({});
+      setArrowOverrides({});
+      setLabelOverrides({});
+      setEditingStepId(null);
+      onLayoutChange?.({});
+    }, [onLayoutChange]);
+
     // Calculate dimensions and step numbers
     const { maxColumns, stepPositions, stepNumbers } = useMemo(() => {
       let maxX = 0;
@@ -76,13 +228,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
     const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
 
-    // Get step center position
+    // Get step center position (includes drag offset)
     const getStepPosition = (stepId: string) => {
       const pos = stepPositions[stepId];
       if (!pos) return null;
-      
-      const x = LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2);
-      const y = HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2);
+      const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
+      const x = LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2) + offset.dx;
+      const y = HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2) + offset.dy;
       return { x, y };
     };
 
@@ -139,12 +291,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       const halfW = SHAPE_WIDTH / 2;
       const halfH = SHAPE_HEIGHT / 2;
       const num = stepNumbers[step.id];
+      const label = labelOverrides[step.id] || step.label;
 
       switch (step.type) {
         case 'start':
         case 'end':
           return (
-            <g key={step.id}>
+            <g>
               <rect
                 x={cx - halfW}
                 y={cy - halfH}
@@ -157,17 +310,17 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 strokeWidth="1.5"
               />
               <text x={cx} y={cy + 4} textAnchor="middle" fill="white" fontSize="11" fontFamily="Arial, sans-serif" fontWeight="600">
-                {step.label}
+                {label}
               </text>
             </g>
           );
         
         case 'decision': {
           const halfD = DECISION_SIZE / 2;
-          const decisionLines = wrapText(step.label, 9, 2);
-          const decisionFontSize = getFontSize(step.label, DECISION_SIZE * 0.7, 8);
+          const decisionLines = wrapText(label, 9, 2);
+          const decisionFontSize = getFontSize(label, DECISION_SIZE * 0.7, 8);
           return (
-            <g key={step.id}>
+            <g>
               <polygon
                 points={`${cx},${cy - halfD} ${cx + halfD},${cy} ${cx},${cy + halfD} ${cx - halfD},${cy}`}
                 fill="#059669"
@@ -194,10 +347,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
         
         case 'document': {
-          const docLines = wrapText(step.label, 14, 3);
-          const docFontSize = getFontSize(step.label, SHAPE_WIDTH - 10, 8);
+          const docLines = wrapText(label, 14, 3);
+          const docFontSize = getFontSize(label, SHAPE_WIDTH - 10, 8);
           return (
-            <g key={step.id}>
+            <g>
               <path
                 d={`M${cx - halfW},${cy - halfH} 
                    L${cx + halfW},${cy - halfH} 
@@ -229,10 +382,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
 
         case 'subprocess': {
-          const subLines = wrapText(step.label, 14, 3);
-          const subFontSize = getFontSize(step.label, SHAPE_WIDTH - 20, 8);
+          const subLines = wrapText(label, 14, 3);
+          const subFontSize = getFontSize(label, SHAPE_WIDTH - 20, 8);
           return (
-            <g key={step.id}>
+            <g>
               <rect
                 x={cx - halfW}
                 y={cy - halfH}
@@ -267,10 +420,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         
         case 'process':
         default: {
-          const processLines = wrapText(step.label, 15, 3);
-          const processFontSize = getFontSize(step.label, SHAPE_WIDTH - 10, 9);
+          const processLines = wrapText(label, 15, 3);
+          const processFontSize = getFontSize(label, SHAPE_WIDTH - 10, 9);
           return (
-            <g key={step.id}>
+            <g>
               <rect
                 x={cx - halfW}
                 y={cy - halfH}
@@ -305,12 +458,12 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
     return (
       <svg
-        ref={ref}
+        ref={combinedRef}
         width={svgWidth}
         height={svgHeight}
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         xmlns="http://www.w3.org/2000/svg"
-        style={{ backgroundColor: 'white' }}
+        style={{ backgroundColor: 'white', touchAction: 'none', userSelect: 'none', cursor: dragInfo ? 'grabbing' : 'default' }}
       >
         {/* Title Header */}
         <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill="#059669" />
@@ -330,7 +483,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {data.lanes.map((lane, laneIndex) => {
           const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
           return (
-            <g key={`bg-${lane.name}`}>
+            <g key={`bg-${laneIndex}`}>
               <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="#059669" stroke="#047857" strokeWidth="1" />
               <text
                 x={LANE_HEADER_WIDTH / 2}
@@ -511,6 +664,12 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             labelY = routeY - 8;
           }
 
+          // Use manual arrow overrides if available
+          const connKey = `${conn.from}->${conn.to}`;
+          const overridePoints = arrowOverrides[connKey];
+          const finalPath = overridePoints ? buildPath(overridePoints) : path;
+          const pathPoints = overridePoints || parsePath(path);
+
           // Arrow & label styling
           const strokeColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
           const markerEnd = isYes ? 'url(#arrowhead-green)' : isNo ? 'url(#arrowhead-red)' : 'url(#arrowhead)';
@@ -521,7 +680,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           return (
             <g key={idx}>
               <path
-                d={path}
+                d={finalPath}
                 fill="none"
                 stroke={strokeColor}
                 strokeWidth="1.5"
@@ -552,20 +711,112 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   </text>
                 </>
               )}
+              {/* Draggable waypoint handles at each bend point */}
+              {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
+                <circle
+                  key={`wp-${connKey}-${i}`}
+                  data-no-export="true"
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={5}
+                  fill="white"
+                  stroke="#3b82f6"
+                  strokeWidth={1.5}
+                  style={{ cursor: 'grab' }}
+                  onPointerDown={(e) => handleWaypointPointerDown(e, connKey, i + 1, pathPoints)}
+                />
+              ))}
             </g>
           );
         })}
 
-        {/* Layer 3: Shapes (rendered AFTER arrows so they sit on top) */}
-        {data.lanes.map((lane) => (
-          <g key={`shapes-${lane.name}`}>
-            {lane.steps.map((step) => {
+        {/* Layer 3: Shapes (rendered AFTER arrows so they sit on top) — draggable + editable */}
+        {data.lanes.map((lane, laneIdx) => (
+          <g key={`shapes-${laneIdx}`}>
+            {lane.steps.map((step, stepIdx) => {
               const pos = getStepPosition(step.id);
               if (!pos) return null;
-              return renderShape(step, pos.x, pos.y);
+              const isDecision = step.type === 'decision';
+              const hw = isDecision ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
+              const hh = isDecision ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
+              const currentLabel = labelOverrides[step.id] || step.label;
+              const isEditing = editingStepId === step.id;
+              return (
+                <g
+                  key={`drag-${laneIdx}-${stepIdx}`}
+                  style={{ cursor: isEditing ? 'text' : (dragInfo?.type === 'shape' && dragInfo.stepId === step.id) ? 'grabbing' : 'grab' }}
+                  onPointerDown={(e) => handleShapePointerDown(e, step.id)}
+                  onDoubleClick={(e) => handleShapeDoubleClick(e, step.id, currentLabel)}
+                >
+                  {/* Transparent hitbox for reliable pointer event detection */}
+                  <rect
+                    x={pos.x - hw - 4}
+                    y={pos.y - hh - 4}
+                    width={(hw + 4) * 2}
+                    height={(hh + 4) * 2}
+                    fill="transparent"
+                    stroke="none"
+                  />
+                  {renderShape(step, pos.x, pos.y)}
+                  {/* Inline text editing overlay */}
+                  {isEditing && (
+                    <foreignObject
+                      x={pos.x - hw + 2}
+                      y={pos.y - hh + 2}
+                      width={hw * 2 - 4}
+                      height={hh * 2 - 4}
+                    >
+                      <textarea
+                        ref={editInputRef}
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onBlur={handleEditSave}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSave(); }
+                          if (e.key === 'Escape') { setEditingStepId(null); }
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          border: '2px solid #3b82f6',
+                          borderRadius: '4px',
+                          background: 'white',
+                          color: '#1f2937',
+                          fontSize: '10px',
+                          fontFamily: 'Arial, sans-serif',
+                          textAlign: 'center',
+                          resize: 'none',
+                          padding: '2px 4px',
+                          outline: 'none',
+                          overflow: 'hidden',
+                        }}
+                      />
+                    </foreignObject>
+                  )}
+                </g>
+              );
             })}
           </g>
         ))}
+
+        {/* Reset Layout button (visible when any edits have been made) */}
+        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0) && (
+          <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
+            <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
+            <text
+              x={svgWidth - 67}
+              y={HEADER_HEIGHT + 26}
+              textAnchor="middle"
+              fill="white"
+              fontSize="12"
+              fontFamily="Arial, sans-serif"
+              fontWeight="600"
+            >
+              Reset Layout
+            </text>
+          </g>
+        )}
 
         {/* Legend */}
         <g transform={`translate(10, ${svgHeight - 30})`}>

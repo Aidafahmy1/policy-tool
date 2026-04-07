@@ -8,6 +8,7 @@ interface ChatInterfaceProps {
   onNewDiagram: (code: string, swimlaneData?: unknown) => void;
   onConversationCreated: (id: string) => void;
   uploadedImageBase64?: string | null;
+  currentSwimlaneData?: unknown | null;
 }
 
 export default function ChatInterface({ 
@@ -15,6 +16,7 @@ export default function ChatInterface({
   onNewDiagram,
   onConversationCreated,
   uploadedImageBase64,
+  currentSwimlaneData,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -138,6 +140,7 @@ export default function ChatInterface({
           messages: apiMessages,
           attachments: [...attachments, ...pendingFiles.map(f => ({ file_name: f.name, file_content: f.content }))],
           uploadedImageBase64: uploadedImageBase64 || undefined,
+          currentSwimlaneData: currentSwimlaneData || undefined,
         }),
       });
 

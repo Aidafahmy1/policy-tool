@@ -27,9 +27,13 @@ export default function Home() {
   const htmlDiagramRef = useRef<HTMLDivElement>(null);
   const expandedSvgRef = useRef<SVGSVGElement>(null);
   const expandedHtmlRef = useRef<HTMLDivElement>(null);
+  const prevConversationId = useRef<string | null>(null);
 
   // Load diagram data when conversation changes
   useEffect(() => {
+    const prev = prevConversationId.current;
+    prevConversationId.current = conversationId;
+
     const loadDiagramData = async () => {
       if (!conversationId) {
         // New conversation - clear diagram data
@@ -38,6 +42,13 @@ export default function Home() {
         setProcessName(null);
         setUploadedImageBase64(null);
         return;
+      }
+
+      // Only clear uploaded image when switching between existing conversations,
+      // NOT when a new conversation is first created (null → id) so the image
+      // stays available for follow-up questions.
+      if (prev !== null && prev !== conversationId) {
+        setUploadedImageBase64(null);
       }
 
       // Load the latest diagram for this conversation
@@ -70,9 +81,6 @@ export default function Home() {
         setSwimlaneData(null);
         setProcessName(null);
       }
-      
-      // Clear uploaded image when switching conversations
-      setUploadedImageBase64(null);
     };
 
     loadDiagramData();
@@ -110,6 +118,10 @@ export default function Home() {
 
       // Clone the SVG to avoid modifying the original
       const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
+
+      // Remove UI-only elements (waypoint handles, reset button, edit overlays)
+      svgClone.querySelectorAll('[data-no-export]').forEach(el => el.remove());
+      svgClone.querySelectorAll('foreignObject').forEach(el => el.remove());
       
       // Ensure proper attributes for export
       svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -193,6 +205,7 @@ export default function Home() {
             onNewDiagram={handleNewDiagram}
             onConversationCreated={setConversationId}
             uploadedImageBase64={uploadedImageBase64}
+            currentSwimlaneData={swimlaneData}
           />
         </div>
 
@@ -284,6 +297,7 @@ export default function Home() {
             swimlaneData={swimlaneData}
             processName={processName}
             uploadedImageBase64={uploadedImageBase64}
+            svgRef={svgDiagramRef}
           />
         </div>
       </div>
