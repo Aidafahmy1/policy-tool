@@ -61,15 +61,23 @@ For EACH step, determine RACI by analyzing the flowchart structure:
    - Management roles that need visibility but don't participate
    - If no one needs notification → use "-"
 
-=== CRITICAL RULES ===
+=== CRITICAL RULES (ABSOLUTELY MANDATORY - NO EXCEPTIONS) ===
 
 - stakeholders MUST be a simple array of strings — ONLY the swimlane titles/role names
-- Use the EXACT process name, stakeholder names, and step names provided
-- Include ALL process steps — do not skip any
+- processSteps array MUST contain EXACTLY the same number of steps as listed in the PROCESS STEPS section
+- Each step's "stepNumber" MUST match the number provided (1, 2, 3, etc.)
+- Each step's "stepName" MUST be EXACTLY the text in quotes from the PROCESS STEPS list — copy it character-for-character, do NOT paraphrase, shorten, or reword
+- Include ALL process steps — do not skip any, do not combine any, do not add any
+- The order of steps in your JSON MUST match the order in the PROCESS STEPS list
 - Never leave any RACI field empty — always a role name or "-"
 - Inputs/Outputs: ONLY from explicit document shapes in the diagram. If no document shape → "-"
 - Decision points: description MUST state "If Yes, the process proceeds to Step [N]. If No, the process returns to Step [N]." with exact step numbers
 - processObjectives and processScope must be SPECIFIC to the process type (S&OP, procurement, HR, etc.)
+
+VERIFICATION CHECKLIST BEFORE RETURNING:
+✓ Count of processSteps matches count in PROCESS STEPS section
+✓ Every stepNumber is present (no gaps, no duplicates)
+✓ Every stepName is copied EXACTLY from the provided list
 
 Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
 
@@ -95,6 +103,8 @@ export async function POST(request: NextRequest) {
       // List steps WITH their swimlane (= Responsible role)
       contextMessage += `\nPROCESS STEPS:\n`;
       contextMessage += `(Format: Step# | Step Name | Swimlane/Role = Responsible | Shape Type)\n`;
+      contextMessage += `CRITICAL: Your processSteps array MUST have EXACTLY ${swimlaneData.lanes.reduce((count: number, lane: any) => count + (lane.steps?.filter((s: any) => s.type !== 'start' && s.type !== 'end').length || 0), 0)} steps.\n`;
+      contextMessage += `CRITICAL: Copy each "Step Name" EXACTLY as written in quotes below — do NOT paraphrase or reword.\n\n`;
       let stepNum = 1;
       const stepIdToNum: Record<string, number> = {};
       const stepIdToLane: Record<string, string> = {};
@@ -204,6 +214,45 @@ export async function POST(request: NextRequest) {
         { error: 'Failed to parse manual data' },
         { status: 500 }
       );
+    }
+
+    // Validate that the manual matches the swimlane data exactly
+    if (swimlaneData && swimlaneData.lanes) {
+      const expectedSteps: Array<{num: number, label: string, lane: string}> = [];
+      let stepNum = 1;
+      for (const lane of swimlaneData.lanes) {
+        if (lane.steps && lane.steps.length > 0) {
+          for (const step of lane.steps) {
+            if (step.type !== 'start' && step.type !== 'end') {
+              expectedSteps.push({ num: stepNum, label: step.label, lane: lane.name });
+              stepNum++;
+            }
+          }
+        }
+      }
+
+      const actualSteps = manualData.processSteps || [];
+      
+      // Check count
+      if (actualSteps.length !== expectedSteps.length) {
+        console.error(`VALIDATION ERROR: Expected ${expectedSteps.length} steps but got ${actualSteps.length}`);
+        console.error('Expected steps:', expectedSteps.map(s => `${s.num}. ${s.label}`));
+        console.error('Actual steps:', actualSteps.map((s: any) => `${s.stepNumber}. ${s.stepName}`));
+      }
+
+      // Check each step name matches exactly
+      for (let i = 0; i < Math.min(expectedSteps.length, actualSteps.length); i++) {
+        const expected = expectedSteps[i];
+        const actual = actualSteps[i];
+        if (actual.stepName !== expected.label) {
+          console.error(`VALIDATION ERROR at step ${i + 1}:`);
+          console.error(`  Expected: "${expected.label}"`);
+          console.error(`  Got: "${actual.stepName}"`);
+        }
+        if (actual.stepNumber !== expected.num) {
+          console.error(`VALIDATION ERROR: Step number mismatch at position ${i + 1}: expected ${expected.num}, got ${actual.stepNumber}`);
+        }
+      }
     }
 
     return NextResponse.json({ manual: manualData });

@@ -82,16 +82,24 @@ For EACH step, determine RACI by analyzing the flowchart structure:
    - Senior management roles that need visibility but don't actively participate
    - If genuinely no one needs notification → "-"
 
-=== ABSOLUTE RULES ===
+=== ABSOLUTE RULES (CRITICAL - NO EXCEPTIONS) ===
 
-- processName = EXACT title from the flowchart
-- stakeholders = ONLY swimlane titles as a simple string array
+- processName = EXACT title from the flowchart (copy character-for-character)
+- stakeholders = ONLY swimlane titles as a simple string array (copy EXACTLY as they appear)
+- processSteps array MUST contain EXACTLY the same number of steps as visible in the flowchart (excluding start/end shapes)
+- Each stepName MUST be EXACTLY the text from the flowchart shape — copy it character-for-character, do NOT paraphrase, shorten, summarize, or reword
+- stepNumber must be sequential (1, 2, 3...) with no gaps or duplicates
 - responsible = ALWAYS the swimlane where the step sits (never blank)
 - accountable = ALWAYS filled with a role name (never blank)
 - consulted/informed = role name or "-" (never blank/empty)
 - inputs/outputs = ONLY from explicit document shapes. No document shape → "-"
-- Include ALL steps visible in the flowchart — do not skip any
+- Include ALL steps visible in the flowchart — do not skip any, do not combine any, do not add any
 - Decision descriptions MUST include exact step numbers for Yes/No paths
+
+VERIFICATION BEFORE RETURNING:
+✓ Count every step shape in the flowchart (excluding start/end) and ensure processSteps has that exact count
+✓ Every stepName is copied EXACTLY from the flowchart text — no paraphrasing
+✓ Every stepNumber is present (1, 2, 3... with no gaps)
 
 Return ONLY valid JSON. No markdown, no code blocks, no explanation.`;
 
