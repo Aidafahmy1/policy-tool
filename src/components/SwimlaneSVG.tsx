@@ -826,8 +826,18 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           <rect x="80" y="2" width="16" height="16" fill="white" stroke="#059669" strokeWidth="2" rx="2" />
           <text x="102" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Process</text>
           
-          <polygon points="175,10 183,2 191,10 183,18" fill="white" stroke="#059669" strokeWidth="2" />
+          <polygon points="175,10 183,2 191,10 183,18" fill="#059669" stroke="#047857" strokeWidth="1.5" />
           <text x="198" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Decision</text>
+
+          <path d={`M265,2 L281,2 L281,14 Q277,19 273,14 Q269,9 265,14 Z`} fill="#059669" stroke="#047857" strokeWidth="1.5" />
+          <text x="288" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Document</text>
+
+          <g>
+            <rect x="355" y="2" width="16" height="16" rx="2" fill="#f3f4f6" stroke="#6b7280" strokeWidth="1.5" />
+            <line x1="359" y1="2" x2="359" y2="18" stroke="#6b7280" strokeWidth="1" />
+            <line x1="367" y1="2" x2="367" y2="18" stroke="#6b7280" strokeWidth="1" />
+          </g>
+          <text x="378" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Subprocess</text>
         </g>
       </svg>
     );
