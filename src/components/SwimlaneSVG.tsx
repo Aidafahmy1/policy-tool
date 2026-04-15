@@ -32,13 +32,13 @@ interface SwimlaneSVGProps {
 }
 
 // Dimensions with extra spacing to avoid arrow-shape overlap
-const LANE_HEIGHT = 140;
+const LANE_HEIGHT = 160;
 const LANE_HEADER_WIDTH = 90;
-const CELL_WIDTH = 210;
-const SHAPE_WIDTH = 120;
-const SHAPE_HEIGHT = 50;
+const CELL_WIDTH = 240;
+const SHAPE_WIDTH = 160;
+const SHAPE_HEIGHT = 64;
 const HEADER_HEIGHT = 40;
-const DECISION_SIZE = 56;
+const DECISION_SIZE = 64;
 const ARROW_GAP = 14; // min gap between arrow and shape edge
 
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
@@ -238,8 +238,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       return { x, y };
     };
 
-    // Helper to wrap text into multiple lines that fit within shape
-    const wrapText = (text: string, maxChars: number, maxLines: number = 3): string[] => {
+    // Helper to wrap text into multiple lines that fit within shape — NO truncation, show full text
+    const wrapText = (text: string, maxChars: number): string[] => {
       const words = text.split(' ');
       const lines: string[] = [];
       let currentLine = '';
@@ -249,17 +249,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           currentLine = (currentLine + ' ' + word).trim();
         } else {
           if (currentLine) lines.push(currentLine);
-          currentLine = word.length > maxChars ? word.substring(0, maxChars - 2) + '..' : word;
+          currentLine = word;
         }
       });
       if (currentLine) lines.push(currentLine);
-      
-      // Truncate if too many lines
-      if (lines.length > maxLines) {
-        const truncated = lines.slice(0, maxLines);
-        truncated[maxLines - 1] = truncated[maxLines - 1].substring(0, maxChars - 2) + '..';
-        return truncated;
-      }
       
       return lines;
     };
@@ -268,8 +261,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const getFontSize = (text: string, shapeWidth: number, baseSize: number = 9): number => {
       const maxCharsPerLine = Math.floor(shapeWidth / (baseSize * 0.6));
       if (text.length <= maxCharsPerLine) return baseSize;
-      if (text.length <= maxCharsPerLine * 1.5) return baseSize - 1;
-      return baseSize - 2;
+      if (text.length <= maxCharsPerLine * 2) return baseSize - 1;
+      if (text.length <= maxCharsPerLine * 3) return Math.max(baseSize - 2, 6);
+      return Math.max(baseSize - 3, 5.5);
     };
 
     // Render step number badge (inside top-left of shape)
@@ -317,8 +311,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         
         case 'decision': {
           const halfD = DECISION_SIZE / 2;
-          const decisionLines = wrapText(label, 9, 2);
-          const decisionFontSize = getFontSize(label, DECISION_SIZE * 0.7, 8);
+          const decisionLines = wrapText(label, 12);
+          const decisionFontSize = getFontSize(label, DECISION_SIZE * 0.8, 8);
           return (
             <g>
               <polygon
@@ -347,7 +341,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
         
         case 'document': {
-          const docLines = wrapText(label, 14, 3);
+          const docLines = wrapText(label, 20);
           const docFontSize = getFontSize(label, SHAPE_WIDTH - 10, 8);
           return (
             <g>
@@ -382,7 +376,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
 
         case 'subprocess': {
-          const subLines = wrapText(label, 14, 3);
+          const subLines = wrapText(label, 18);
           const subFontSize = getFontSize(label, SHAPE_WIDTH - 20, 8);
           return (
             <g>
@@ -420,7 +414,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         
         case 'process':
         default: {
-          const processLines = wrapText(label, 15, 3);
+          const processLines = wrapText(label, 22);
           const processFontSize = getFontSize(label, SHAPE_WIDTH - 10, 9);
           return (
             <g>
