@@ -5,164 +5,265 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
 
-const MANUAL_GENERATION_PROMPT = `You are an expert business process consultant generating a professional process manual.
+// Increase timeout for AI API calls (Vercel default is 10s)
+export const maxDuration = 60;
 
-THINK DEEPLY about the process before generating output. Analyze the flowchart structure, understand the roles, and make intelligent RACI assignments.
-
-OUTPUT THIS EXACT JSON STRUCTURE:
-
-{
-  "processName": "EXACT process name as provided",
-  "processLevel": "Subsidiary Level Process",
-  "processObjectives": "2-3 sentences describing the specific objectives of THIS process. Be specific — if S&OP, write about demand-supply alignment; if procurement, write about purchasing efficiency.",
-  "processScope": "Describe when this process runs (annual/quarterly/monthly), what triggers it, who participates, and what it covers.",
-  "stakeholders": ["Role1", "Role2", "Role3"],
-  "authorityMatrixDefinition": {
-    "R": "Responsible - The doer(s) who physically execute the task or produce the deliverable.",
-    "A": "Accountable - The single owner who is ultimately accountable for the outcome and must approve/sign-off.",
-    "C": "Consulted - Two-way communication with stakeholders whose input and feedback directly affects the outcome.",
-    "I": "Informed - One-way communication to stakeholders who need to be kept in the loop but do not contribute directly."
-  },
-  "processSteps": [
-    {
-      "stepNumber": 1,
-      "stepName": "Exact step name",
-      "description": "Detailed description of what happens in this step.",
-      "responsible": "Role that performs this step (the swimlane it sits in)",
-      "accountable": "Senior role who approves/owns this step's outcome",
-      "consulted": "Roles whose input is needed, or '-' if none",
-      "informed": "Roles who need to know about this step, or '-' if none",
-      "inputs": "-",
-      "outputs": "-"
-    }
-  ]
+// ── Helper: extract steps from swimlane data ────────────────────────────
+interface ExtractedStep {
+  stepNumber: number;
+  stepName: string;
+  responsible: string;
+  type: string;
+  id: string;
+  isDocument: boolean;
 }
 
-=== RACI ASSIGNMENT LOGIC ===
+function extractStepsFromSwimlane(swimlaneData: any): {
+  steps: ExtractedStep[];
+  stakeholders: string[];
+  processName: string;
+  stepIdToNum: Record<string, number>;
+  stepIdToLane: Record<string, string>;
+  documentLabels: Set<string>;
+} {
+  const steps: ExtractedStep[] = [];
+  const stakeholders: string[] = [];
+  const stepIdToNum: Record<string, number> = {};
+  const stepIdToLane: Record<string, string> = {};
+  const documentLabels = new Set<string>();
+  let stepNum = 1;
 
-For EACH step, determine RACI by analyzing the flowchart structure:
+  for (const lane of swimlaneData.lanes) {
+    stakeholders.push(lane.name);
+    if (lane.steps && lane.steps.length > 0) {
+      for (const step of lane.steps) {
+        if (step.type !== 'start' && step.type !== 'end') {
+          stepIdToNum[step.id] = stepNum;
+          stepIdToLane[step.id] = lane.name;
+          const isDoc = step.type === 'document';
+          if (isDoc) documentLabels.add(step.label);
+          steps.push({
+            stepNumber: stepNum,
+            stepName: step.label,
+            responsible: lane.name,
+            type: step.type,
+            id: step.id,
+            isDocument: isDoc,
+          });
+          stepNum++;
+        }
+      }
+    }
+  }
 
-1. RESPONSIBLE (R) = The swimlane/role where the step physically sits in the flowchart. This is the person DOING the work.
-
-2. ACCOUNTABLE (A) = The most senior role who oversees the area of this step. Logic:
-   - If the step is an approval/review/sign-off → the reviewer IS the Accountable
-   - If the step is operational work → the manager/director above the Responsible role is Accountable
-   - If a "Group CEO" or "GM" swimlane exists → they are often Accountable for key decision/approval steps
-   - Each step must have exactly ONE Accountable role
-   - The Accountable CAN be the same as Responsible for senior-level steps
-
-3. CONSULTED (C) = Roles that provide input BEFORE the step is executed. Logic:
-   - Look at incoming arrows from other swimlanes — those roles may be Consulted
-   - Subject matter experts whose domain knowledge affects the step
-   - If no other role provides input → use "-"
-
-4. INFORMED (I) = Roles that are notified AFTER the step is completed. Logic:
-   - Look at outgoing arrows to other swimlanes — those roles may be Informed
-   - Management roles that need visibility but don't participate
-   - If no one needs notification → use "-"
-
-=== CRITICAL RULES (ABSOLUTELY MANDATORY - NO EXCEPTIONS) ===
-
-- stakeholders MUST be a simple array of strings — ONLY the swimlane titles/role names
-- processSteps array MUST contain EXACTLY the same number of steps as listed in the PROCESS STEPS section
-- Each step's "stepNumber" MUST match the number provided (1, 2, 3, etc.)
-- Each step's "stepName" MUST be EXACTLY the text in quotes from the PROCESS STEPS list — copy it character-for-character, do NOT paraphrase, shorten, or reword
-- Include ALL process steps — do not skip any, do not combine any, do not add any
-- The order of steps in your JSON MUST match the order in the PROCESS STEPS list
-- Never leave any RACI field empty — always a role name or "-"
-- Inputs/Outputs: ONLY from explicit document shapes in the diagram. If no document shape → "-"
-- Decision points: description MUST state "If Yes, the process proceeds to Step [N]. If No, the process returns to Step [N]." with exact step numbers
-- processObjectives and processScope must be SPECIFIC to the process type (S&OP, procurement, HR, etc.)
-
-VERIFICATION CHECKLIST BEFORE RETURNING:
-✓ Count of processSteps matches count in PROCESS STEPS section
-✓ Every stepNumber is present (no gaps, no duplicates)
-✓ Every stepName is copied EXACTLY from the provided list
-
-Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
+  return {
+    steps,
+    stakeholders,
+    processName: swimlaneData.title || 'Business Process',
+    stepIdToNum,
+    stepIdToLane,
+    documentLabels,
+  };
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { messages, mermaidCode, orgStructure, swimlaneData, processName } = await request.json();
 
-    // Build context for manual generation
-    let contextMessage = `Generate a process manual for the EXACT process described below.\n\n`;
-    
-    // If we have swimlane data, use that as primary source
+    // ── PATH A: We have structured swimlane data ──────────────────────
     if (swimlaneData && swimlaneData.lanes) {
-      const exactProcessName = processName || swimlaneData.title || 'Business Process';
-      contextMessage += `===== PROCESS INFORMATION =====\n\n`;
-      contextMessage += `PROCESS NAME: "${exactProcessName}"\n\n`;
-      
-      // List stakeholders
-      contextMessage += `STAKEHOLDERS (swimlane roles — use these EXACTLY):\n`;
-      for (const lane of swimlaneData.lanes) {
-        contextMessage += `- "${lane.name}"\n`;
+      const extracted = extractStepsFromSwimlane(swimlaneData);
+      const exactProcessName = processName || extracted.processName;
+
+      // Build a numbered step list for the AI (context only)
+      let stepList = '';
+      for (const s of extracted.steps) {
+        stepList += `${s.stepNumber}. "${s.stepName}" | Swimlane: "${s.responsible}" | Type: ${s.type}`;
+        if (s.type === 'decision') stepList += ' (Yes/No diamond)';
+        if (s.isDocument) stepList += ' (DOCUMENT shape — this counts as an input/output)';
+        stepList += '\n';
       }
-      
-      // List steps WITH their swimlane (= Responsible role)
-      contextMessage += `\nPROCESS STEPS:\n`;
-      contextMessage += `(Format: Step# | Step Name | Swimlane/Role = Responsible | Shape Type)\n`;
-      contextMessage += `CRITICAL: Your processSteps array MUST have EXACTLY ${swimlaneData.lanes.reduce((count: number, lane: any) => count + (lane.steps?.filter((s: any) => s.type !== 'start' && s.type !== 'end').length || 0), 0)} steps.\n`;
-      contextMessage += `CRITICAL: Copy each "Step Name" EXACTLY as written in quotes below — do NOT paraphrase or reword.\n\n`;
-      let stepNum = 1;
-      const stepIdToNum: Record<string, number> = {};
-      const stepIdToLane: Record<string, string> = {};
-      for (const lane of swimlaneData.lanes) {
-        if (lane.steps && lane.steps.length > 0) {
-          for (const step of lane.steps) {
-            if (step.type !== 'start' && step.type !== 'end') {
-              stepIdToNum[step.id] = stepNum;
-              stepIdToLane[step.id] = lane.name;
-              contextMessage += `${stepNum}. "${step.label}" | Swimlane: "${lane.name}" | Type: ${step.type}${step.type === 'decision' ? ' (Yes/No)' : ''}${step.type === 'document' ? ' (this IS a document shape)' : ''}\n`;
-              stepNum++;
+
+      // Build connection list
+      let connList = '';
+      if (swimlaneData.connections) {
+        for (const conn of swimlaneData.connections) {
+          const fromNum = extracted.stepIdToNum[conn.from];
+          const toNum = extracted.stepIdToNum[conn.to];
+          const fromLane = extracted.stepIdToLane[conn.from] || '?';
+          const toLane = extracted.stepIdToLane[conn.to] || '?';
+          if (fromNum && toNum) {
+            connList += `- Step ${fromNum} (${fromLane}) → Step ${toNum} (${toLane})${conn.label ? ` [${conn.label}]` : ''}\n`;
+          }
+        }
+      }
+
+      // Build the pre-filled JSON skeleton — stepNumber, stepName, responsible are LOCKED
+      const skeleton = extracted.steps.map(s => ({
+        stepNumber: s.stepNumber,
+        stepName: s.stepName,
+        description: `__FILL__`,
+        responsible: s.responsible,
+        accountable: `__FILL__`,
+        consulted: `__FILL__`,
+        informed: `__FILL__`,
+        inputs: s.isDocument ? s.stepName : '-',
+        outputs: '-',
+      }));
+
+      // For document shapes, figure out which steps feed into/out of them
+      if (swimlaneData.connections) {
+        for (const conn of swimlaneData.connections) {
+          const fromStep = extracted.steps.find(s => s.id === conn.from);
+          const toStep = extracted.steps.find(s => s.id === conn.to);
+          if (fromStep && toStep) {
+            // If arrow goes INTO a document shape, the source step outputs that document
+            if (toStep.isDocument) {
+              const srcEntry = skeleton.find(e => e.stepNumber === fromStep.stepNumber);
+              if (srcEntry && srcEntry.outputs === '-') {
+                srcEntry.outputs = toStep.stepName;
+              } else if (srcEntry && srcEntry.outputs !== '-') {
+                srcEntry.outputs += ', ' + toStep.stepName;
+              }
+            }
+            // If arrow goes FROM a document shape, the target step has that document as input
+            if (fromStep.isDocument) {
+              const tgtEntry = skeleton.find(e => e.stepNumber === toStep.stepNumber);
+              if (tgtEntry && tgtEntry.inputs === '-') {
+                tgtEntry.inputs = fromStep.stepName;
+              } else if (tgtEntry && tgtEntry.inputs !== '-') {
+                tgtEntry.inputs += ', ' + fromStep.stepName;
+              }
             }
           }
         }
       }
-      
-      // Show connections with step numbers and labels
-      contextMessage += `\nFLOW CONNECTIONS (arrows between steps):\n`;
-      if (swimlaneData.connections) {
-        for (const conn of swimlaneData.connections) {
-          const fromNum = stepIdToNum[conn.from];
-          const toNum = stepIdToNum[conn.to];
-          const fromLane = stepIdToLane[conn.from] || '?';
-          const toLane = stepIdToLane[conn.to] || '?';
-          if (fromNum && toNum) {
-            contextMessage += `- Step ${fromNum} (${fromLane}) → Step ${toNum} (${toLane})${conn.label ? ` [${conn.label}]` : ''}\n`;
+
+      // Build org structure context
+      let orgContext = '';
+      if (orgStructure) {
+        orgContext = `\n===== ORGANIZATION STRUCTURE =====\n${orgStructure}\n\n`;
+        orgContext += `Use ACTUAL role titles from the org structure for RACI assignments (accountable, consulted, informed).\n`;
+        orgContext += `Map swimlane roles to the most relevant org structure roles.\n`;
+        orgContext += `Use role titles (e.g., "CFO"), not people's names.\n\n`;
+      }
+
+      const systemPrompt = `You are an expert business process consultant. You will receive a pre-built JSON skeleton for a process manual. The stepNumber, stepName, responsible, inputs, and outputs fields are ALREADY CORRECT and LOCKED — do NOT change them.
+
+Your ONLY job is to fill in the fields marked "__FILL__":
+- "description": A detailed 1-3 sentence description of what happens in this step. For decision steps, you MUST state: "If Yes, the process proceeds to Step [N]. If No, the process returns/goes to Step [N]." with the correct step numbers from the connections list.
+- "accountable": The most senior role who oversees/approves this step. Use one of the stakeholder names or an org structure role.
+- "consulted": Roles who provide input before this step, or "-" if none.
+- "informed": Roles notified after this step, or "-" if none.
+
+You must ALSO fill in:
+- "processObjectives": 2-3 sentences specific to THIS process type.
+- "processScope": When this process runs, what triggers it, who participates.
+
+RULES:
+- Do NOT change stepNumber, stepName, responsible, inputs, or outputs — they are pre-filled and correct.
+- Do NOT add, remove, skip, or reorder any steps.
+- The processSteps array must have EXACTLY ${extracted.steps.length} entries.
+- Never leave any field empty or null — use "-" if not applicable.
+- ONLY use document names that appear in the flowchart for inputs/outputs.
+
+Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
+
+      const userMessage = `Process: "${exactProcessName}"
+Stakeholders: ${JSON.stringify(extracted.stakeholders)}
+
+STEPS IN THE FLOWCHART:
+${stepList}
+FLOW CONNECTIONS:
+${connList}
+${orgContext}
+HERE IS THE PRE-FILLED JSON SKELETON. Fill in ONLY the "__FILL__" fields. Do NOT change anything else:
+
+${JSON.stringify({
+  processName: exactProcessName,
+  processLevel: "Subsidiary Level Process",
+  processObjectives: "__FILL__",
+  processScope: "__FILL__",
+  stakeholders: extracted.stakeholders,
+  authorityMatrixDefinition: {
+    R: "Responsible - The doer(s) who physically execute the task or produce the deliverable.",
+    A: "Accountable - The single owner who is ultimately accountable for the outcome and must approve/sign-off.",
+    C: "Consulted - Two-way communication with stakeholders whose input and feedback directly affects the outcome.",
+    I: "Informed - One-way communication to stakeholders who need to be kept in the loop but do not contribute directly."
+  },
+  processSteps: skeleton,
+}, null, 2)}`;
+
+      const stream = anthropic.messages.stream({
+        model: 'claude-opus-4-5',
+        max_tokens: 32000,
+        thinking: {
+          type: 'enabled',
+          budget_tokens: 16000,
+        },
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      const response = await stream.finalMessage();
+
+      const textBlock = response.content.find((c) => c.type === 'text');
+      const text = textBlock?.type === 'text' ? textBlock.text : '';
+
+      // Parse JSON from response
+      let manualData;
+      try {
+        const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch) {
+          manualData = JSON.parse(codeBlockMatch[1].trim());
+        } else {
+          const jsonStart = text.indexOf('{');
+          const jsonEnd = text.lastIndexOf('}');
+          if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+            manualData = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+          } else {
+            manualData = JSON.parse(text.trim());
           }
         }
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.error('Response was:', text.substring(0, 500));
+        return NextResponse.json({ error: 'Failed to parse manual data' }, { status: 500 });
       }
-      
-      contextMessage += `\n===== RACI GUIDANCE =====\n`;
-      contextMessage += `For each step above:\n`;
-      contextMessage += `- "responsible" = the Swimlane role listed next to it (the role doing the work)\n`;
-      contextMessage += `- "accountable" = the most senior role from the stakeholders list who oversees that area\n`;
-      contextMessage += `- "consulted" = other roles whose swimlanes have arrows connecting to/from this step\n`;
-      contextMessage += `- "informed" = remaining roles that should know about this step's outcome\n\n`;
-      contextMessage += `REMINDER: The manual MUST be about "${exactProcessName}" specifically.\n\n`;
-    } else if (mermaidCode) {
+
+      // ── FORCE-OVERWRITE: Guarantee step names, numbers, responsible, inputs/outputs match flowchart ──
+      manualData.processName = exactProcessName;
+      manualData.stakeholders = extracted.stakeholders;
+
+      const aiSteps = manualData.processSteps || [];
+
+      // Rebuild processSteps to guarantee correctness
+      manualData.processSteps = extracted.steps.map((expected, i) => {
+        // Try to find matching AI step by number or position
+        const aiStep = aiSteps.find((s: any) => s.stepNumber === expected.stepNumber) || aiSteps[i] || {};
+        return {
+          stepNumber: expected.stepNumber,
+          stepName: expected.stepName,  // LOCKED from flowchart
+          description: aiStep.description || `Step ${expected.stepNumber}: ${expected.stepName}`,
+          responsible: expected.responsible,  // LOCKED from flowchart
+          accountable: aiStep.accountable || expected.responsible,
+          consulted: aiStep.consulted || '-',
+          informed: aiStep.informed || '-',
+          inputs: skeleton[i]?.inputs || '-',   // LOCKED from flowchart
+          outputs: skeleton[i]?.outputs || '-',  // LOCKED from flowchart
+        };
+      });
+
+      return NextResponse.json({ manual: manualData });
+    }
+
+    // ── PATH B: Fallback for mermaid-only (no swimlane data) ──────────
+    let contextMessage = `Generate a process manual for the process described below.\n\n`;
+    if (mermaidCode) {
       contextMessage += `PROCESS DIAGRAM (Mermaid code):\n\`\`\`\n${mermaidCode}\n\`\`\`\n\n`;
     }
-
     if (orgStructure) {
-      contextMessage += `\n===== ORGANIZATION STRUCTURE =====\n${orgStructure}\n\n`;
-      contextMessage += `===== ORG STRUCTURE → RACI MAPPING INSTRUCTIONS =====\n`;
-      contextMessage += `Cross-reference the organization structure above with the swimlane roles from the flowchart.\n`;
-      contextMessage += `For each process step:\n`;
-      contextMessage += `- "responsible" = The swimlane title where the step physically sits (this is the role DOING the work)\n`;
-      contextMessage += `- "accountable" = Find the SENIOR/MANAGER role from the org structure that OVERSEES this swimlane's area. Example:\n`;
-      contextMessage += `    • If swimlane is "Finance" and org has "CFO: John Smith" → accountable = "CFO"\n`;
-      contextMessage += `    • If swimlane is "Supply Chain" and org has "VP Supply Chain: Sara Jones" → accountable = "VP Supply Chain"\n`;
-      contextMessage += `    • If swimlane is "Planning" and org has "Planning Manager: Ali Hassan" → accountable = "Planning Manager"\n`;
-      contextMessage += `- "consulted" = Other roles from the org structure or swimlanes that should provide input BEFORE the step executes\n`;
-      contextMessage += `- "informed" = Roles from the org structure that need to be NOTIFIED after the step completes\n\n`;
-      contextMessage += `CRITICAL: Use the ACTUAL role titles from the org structure (e.g., "CFO", "VP Sales", "Planning Manager"), NOT generic terms like "Management" or "Senior Leadership".\n`;
-      contextMessage += `If the org structure lists specific people (e.g., "CFO: John Smith"), use the ROLE TITLE ("CFO") not the person's name.\n`;
-      contextMessage += `Map EVERY swimlane to the most relevant org structure roles for accurate RACI assignments.\n\n`;
+      contextMessage += `ORGANIZATION STRUCTURE:\n${orgStructure}\n\n`;
     }
-
     if (messages && messages.length > 0) {
       contextMessage += `CONVERSATION HISTORY:\n`;
       for (const msg of messages) {
@@ -170,35 +271,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const fallbackPrompt = `You are an expert business process consultant generating a process manual as JSON. Output ONLY valid JSON with this structure: { "processName", "processLevel", "processObjectives", "processScope", "stakeholders": [...], "authorityMatrixDefinition": {...}, "processSteps": [{ "stepNumber", "stepName", "description", "responsible", "accountable", "consulted", "informed", "inputs", "outputs" }] }. Return ONLY valid JSON. No markdown, no explanation.`;
+
     const stream = anthropic.messages.stream({
       model: 'claude-opus-4-5',
       max_tokens: 32000,
-      thinking: {
-        type: 'enabled',
-        budget_tokens: 16000,
-      },
-      system: MANUAL_GENERATION_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: contextMessage,
-        },
-      ],
+      thinking: { type: 'enabled', budget_tokens: 16000 },
+      system: fallbackPrompt,
+      messages: [{ role: 'user', content: contextMessage }],
     });
     const response = await stream.finalMessage();
-
     const textBlock = response.content.find((c) => c.type === 'text');
     const text = textBlock?.type === 'text' ? textBlock.text : '';
 
-    // Parse JSON from response
     let manualData;
     try {
-      // Try to extract JSON if wrapped in code blocks
       const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlockMatch) {
         manualData = JSON.parse(codeBlockMatch[1].trim());
       } else {
-        // Try to find JSON object in the response
         const jsonStart = text.indexOf('{');
         const jsonEnd = text.lastIndexOf('}');
         if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
@@ -209,57 +300,13 @@ export async function POST(request: NextRequest) {
       }
     } catch (parseError) {
       console.error('JSON parse error:', parseError);
-      console.error('Response was:', text.substring(0, 500));
-      return NextResponse.json(
-        { error: 'Failed to parse manual data' },
-        { status: 500 }
-      );
-    }
-
-    // Validate that the manual matches the swimlane data exactly
-    if (swimlaneData && swimlaneData.lanes) {
-      const expectedSteps: Array<{num: number, label: string, lane: string}> = [];
-      let stepNum = 1;
-      for (const lane of swimlaneData.lanes) {
-        if (lane.steps && lane.steps.length > 0) {
-          for (const step of lane.steps) {
-            if (step.type !== 'start' && step.type !== 'end') {
-              expectedSteps.push({ num: stepNum, label: step.label, lane: lane.name });
-              stepNum++;
-            }
-          }
-        }
-      }
-
-      const actualSteps = manualData.processSteps || [];
-      
-      // Check count
-      if (actualSteps.length !== expectedSteps.length) {
-        console.error(`VALIDATION ERROR: Expected ${expectedSteps.length} steps but got ${actualSteps.length}`);
-        console.error('Expected steps:', expectedSteps.map(s => `${s.num}. ${s.label}`));
-        console.error('Actual steps:', actualSteps.map((s: any) => `${s.stepNumber}. ${s.stepName}`));
-      }
-
-      // Check each step name matches exactly
-      for (let i = 0; i < Math.min(expectedSteps.length, actualSteps.length); i++) {
-        const expected = expectedSteps[i];
-        const actual = actualSteps[i];
-        if (actual.stepName !== expected.label) {
-          console.error(`VALIDATION ERROR at step ${i + 1}:`);
-          console.error(`  Expected: "${expected.label}"`);
-          console.error(`  Got: "${actual.stepName}"`);
-        }
-        if (actual.stepNumber !== expected.num) {
-          console.error(`VALIDATION ERROR: Step number mismatch at position ${i + 1}: expected ${expected.num}, got ${actual.stepNumber}`);
-        }
-      }
+      return NextResponse.json({ error: 'Failed to parse manual data' }, { status: 500 });
     }
 
     return NextResponse.json({ manual: manualData });
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error('Manual generation error:', errMsg);
-    console.error('Full error:', error);
     return NextResponse.json(
       { error: `Failed to generate manual: ${errMsg}` },
       { status: 500 }
