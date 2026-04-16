@@ -63,6 +63,18 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const editInputRef = useRef<HTMLTextAreaElement | null>(null);
     const [selectedArrow, setSelectedArrow] = useState<string | null>(null);
     const [deletedConnections, setDeletedConnections] = useState<Set<string>>(new Set());
+    // Extra shapes and connections added by user
+    const [extraShapes, setExtraShapes] = useState<Array<{
+      id: string; label: string;
+      type: 'process' | 'decision' | 'document' | 'subprocess';
+      x: number; y: number;
+    }>>([]);
+    const [extraConnections, setExtraConnections] = useState<Array<{
+      from: string; to: string; label?: string;
+    }>>([]);
+    const [addMode, setAddMode] = useState<'process' | 'decision' | 'document' | 'subprocess' | 'arrow' | null>(null);
+    const [arrowStart, setArrowStart] = useState<string | null>(null);
+    const extraIdCounter = useRef(0);
     const [dragInfo, setDragInfo] = useState<{
       type: 'shape';
       stepId: string;
@@ -84,6 +96,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setEditingStepId(null);
       setSelectedArrow(null);
       setDeletedConnections(new Set());
+      setExtraShapes([]);
+      setExtraConnections([]);
+      setAddMode(null);
+      setArrowStart(null);
     }, [data]);
 
     // Convert screen coordinates to SVG coordinates
@@ -139,10 +155,20 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       if (editingStepId) return; // don't drag while editing
       e.stopPropagation();
       setSelectedArrow(null);
+      // Arrow creation mode: first click = source, second click = target
+      if (addMode === 'arrow') {
+        if (!arrowStart) {
+          setArrowStart(stepId);
+        } else if (arrowStart !== stepId) {
+          setExtraConnections(prev => [...prev, { from: arrowStart, to: stepId }]);
+          setArrowStart(null);
+        }
+        return;
+      }
       const svgPt = screenToSVG(e.clientX, e.clientY);
       const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
       setDragInfo({ type: 'shape', stepId, startMouse: svgPt, startOffset: { ...offset } });
-    }, [screenToSVG, posOffsets, editingStepId]);
+    }, [screenToSVG, posOffsets, editingStepId, addMode, arrowStart]);
 
     // Pointer-down on an arrow waypoint starts waypoint drag
     const handleWaypointPointerDown = useCallback((e: React.PointerEvent, connKey: string, wpIdx: number, currentPoints: {x: number, y: number}[]) => {
@@ -199,6 +225,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setEditingStepId(null);
       setSelectedArrow(null);
       setDeletedConnections(new Set());
+      setExtraShapes([]);
+      setExtraConnections([]);
+      setAddMode(null);
+      setArrowStart(null);
       onLayoutChange?.({});
     }, [onLayoutChange]);
 
@@ -221,6 +251,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
         if (e.key === 'Escape') {
           setSelectedArrow(null);
+          setAddMode(null);
+          setArrowStart(null);
         }
       };
       window.addEventListener('keydown', handleKeyDown);
@@ -316,14 +348,21 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
     const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
 
-    // Get step center position (includes drag offset)
+    // Get step center position (includes drag offset) — works for both grid steps and extra shapes
     const getStepPosition = (stepId: string) => {
       const pos = stepPositions[stepId];
-      if (!pos) return null;
-      const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
-      const x = LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2) + offset.dx;
-      const y = HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2) + offset.dy;
-      return { x, y };
+      if (pos) {
+        const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
+        const x = LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2) + offset.dx;
+        const y = HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2) + offset.dy;
+        return { x, y };
+      }
+      const extra = extraShapes.find(s => s.id === stepId);
+      if (extra) {
+        const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
+        return { x: extra.x + offset.dx, y: extra.y + offset.dy };
+      }
+      return null;
     };
 
     // Helper to wrap text into multiple lines that fit within shape — NO truncation, show full text
@@ -545,8 +584,21 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         height={svgHeight}
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         xmlns="http://www.w3.org/2000/svg"
-        style={{ backgroundColor: 'white', touchAction: 'none', userSelect: 'none', cursor: dragInfo ? 'grabbing' : 'default' }}
-        onClick={() => setSelectedArrow(null)}
+        style={{ backgroundColor: 'white', touchAction: 'none', userSelect: 'none', cursor: addMode ? 'crosshair' : dragInfo ? 'grabbing' : 'default' }}
+        onClick={(e) => {
+          setSelectedArrow(null);
+          if (addMode && addMode !== 'arrow') {
+            const svgPt = screenToSVG(e.clientX, e.clientY);
+            const newId = `extra-${++extraIdCounter.current}`;
+            setExtraShapes(prev => [...prev, {
+              id: newId,
+              label: addMode === 'decision' ? 'Decision?' : addMode === 'document' ? 'Document' : addMode === 'subprocess' ? 'Subprocess' : 'New Step',
+              type: addMode, x: svgPt.x, y: svgPt.y,
+            }]);
+            setAddMode(null);
+          }
+          if (addMode === 'arrow') { setArrowStart(null); }
+        }}
       >
         {/* Title Header */}
         <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill="#059669" />
@@ -906,6 +958,76 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           );
         })}
 
+        {/* Extra connections added by user */}
+        {extraConnections.map((conn, idx) => {
+          const connKey = `extra-${conn.from}->${conn.to}`;
+          if (deletedConnections.has(connKey)) return null;
+          const fromPos = getStepPosition(conn.from);
+          const toPos = getStepPosition(conn.to);
+          if (!fromPos || !toPos) return null;
+          const overridePoints = arrowOverrides[connKey];
+          let path: string;
+          if (overridePoints) {
+            path = buildPath(overridePoints);
+          } else {
+            const dx = toPos.x - fromPos.x;
+            const dy = toPos.y - fromPos.y;
+            if (Math.abs(dy) < 20 && dx !== 0) {
+              path = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
+            } else if (Math.abs(dx) < 20 && dy !== 0) {
+              path = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
+            } else {
+              const midX = (fromPos.x + toPos.x) / 2;
+              path = `M ${fromPos.x} ${fromPos.y} L ${midX} ${fromPos.y} L ${midX} ${toPos.y} L ${toPos.x} ${toPos.y}`;
+            }
+          }
+          const pathPoints = overridePoints || parsePath(path);
+          const isSelected = selectedArrow === connKey;
+          const midPt = pathPoints[Math.floor(pathPoints.length / 2)] || pathPoints[0];
+          return (
+            <g key={`ec-${idx}`}>
+              <path d={path} fill="none" stroke="white" strokeWidth="5" />
+              {isSelected && <path d={path} fill="none" stroke="#3b82f6" strokeWidth="5" strokeOpacity="0.3" />}
+              <path d={path} fill="none" stroke="#6b7280" strokeWidth={isSelected ? "2.5" : "1.5"} markerEnd="url(#arrowhead)" />
+              <path d={path} fill="none" stroke="transparent" strokeWidth="14" style={{ cursor: 'pointer' }}
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  if (!isSelected) { setSelectedArrow(connKey); }
+                  else {
+                    const svgPt = screenToSVG(e.clientX, e.clientY);
+                    let best = 0, bestD = Infinity;
+                    for (let i = 0; i < pathPoints.length - 1; i++) {
+                      const a = pathPoints[i], b = pathPoints[i + 1];
+                      const sdx = b.x - a.x, sdy = b.y - a.y, l2 = sdx * sdx + sdy * sdy;
+                      const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((svgPt.x - a.x) * sdx + (svgPt.y - a.y) * sdy) / l2));
+                      const d = Math.hypot(svgPt.x - (a.x + t * sdx), svgPt.y - (a.y + t * sdy));
+                      if (d < bestD) { bestD = d; best = i; }
+                    }
+                    handleSegmentClick(e, connKey, best, pathPoints);
+                  }
+                }}
+              />
+              {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
+                <circle key={`ewp-${idx}-${i}`} data-no-export="true" cx={pt.x} cy={pt.y}
+                  r={isSelected ? 6 : 4} fill={isSelected ? '#3b82f6' : 'white'} stroke={isSelected ? 'white' : '#3b82f6'} strokeWidth={1.5}
+                  style={{ cursor: 'grab' }} onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, i + 1, pathPoints); }}
+                />
+              ))}
+              {isSelected && (
+                <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={(e) => {
+                  e.stopPropagation();
+                  setDeletedConnections(prev => { const n = new Set(prev); n.add(connKey); return n; });
+                  setSelectedArrow(null);
+                }}>
+                  <circle cx={midPt.x} cy={midPt.y - 18} r={9} fill="#ef4444" stroke="white" strokeWidth="1.5" />
+                  <text x={midPt.x} y={midPt.y - 14} textAnchor="middle" fill="white" fontSize="12" fontFamily="Arial" fontWeight="bold">×</text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+
         {/* Layer 3: Shapes (rendered AFTER arrows so they sit on top) — draggable + editable */}
         {data.lanes.map((lane, laneIdx) => (
           <g key={`shapes-${laneIdx}`}>
@@ -977,8 +1099,120 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           </g>
         ))}
 
+        {/* Extra shapes added by user */}
+        {extraShapes.map((shape, idx) => {
+          const pos = getStepPosition(shape.id);
+          if (!pos) return null;
+          const isDecision = shape.type === 'decision';
+          const hw = isDecision ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
+          const hh = isDecision ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
+          const currentLabel = labelOverrides[shape.id] || shape.label;
+          const isEditing = editingStepId === shape.id;
+          return (
+            <g key={`extra-shape-${idx}`}
+              style={{ cursor: addMode === 'arrow' ? 'crosshair' : isEditing ? 'text' : (dragInfo?.type === 'shape' && dragInfo.stepId === shape.id) ? 'grabbing' : 'grab' }}
+              onPointerDown={(e) => handleShapePointerDown(e, shape.id)}
+              onDoubleClick={(e) => handleShapeDoubleClick(e, shape.id, currentLabel)}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <rect x={pos.x - hw - 4} y={pos.y - hh - 4} width={(hw + 4) * 2} height={(hh + 4) * 2} fill="transparent" stroke="none" />
+              {renderShape({ id: shape.id, label: shape.label, type: shape.type, x: 0 }, pos.x, pos.y)}
+              {isEditing && (
+                <foreignObject x={pos.x - hw + 2} y={pos.y - hh + 2} width={hw * 2 - 4} height={hh * 2 - 4}>
+                  <textarea ref={editInputRef} value={editText}
+                    onChange={(e) => setEditText(e.target.value)} onBlur={handleEditSave}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSave(); }
+                      if (e.key === 'Escape') { setEditingStepId(null); }
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    style={{ width: '100%', height: '100%', border: '2px solid #3b82f6', borderRadius: '4px',
+                      background: 'white', color: '#1f2937', fontSize: '10px', fontFamily: 'Arial, sans-serif',
+                      textAlign: 'center', resize: 'none', padding: '2px 4px', outline: 'none', overflow: 'hidden' }}
+                  />
+                </foreignObject>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Arrow-start highlight: dashed blue border on selected source shape */}
+        {arrowStart && (() => {
+          const pos = getStepPosition(arrowStart);
+          if (!pos) return null;
+          const step = [...data.lanes.flatMap(l => l.steps), ...extraShapes].find(s => s.id === arrowStart);
+          const isD = step?.type === 'decision';
+          const hw = isD ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
+          const hh = isD ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
+          return (
+            <rect data-no-export="true" x={pos.x - hw - 6} y={pos.y - hh - 6} width={(hw + 6) * 2} height={(hh + 6) * 2}
+              fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeDasharray="6,3" rx="6" />
+          );
+        })()}
+
+        {/* Toolbar: Add Shape / Arrow */}
+        {(() => {
+          const tx = LANE_HEADER_WIDTH + 8;
+          const ty = HEADER_HEIGHT + 5;
+          const btnH = 20;
+          const btnGap = 3;
+          const modes: Array<{ key: typeof addMode; label: string; w: number }> = [
+            { key: 'process', label: '+ Process', w: 58 },
+            { key: 'decision', label: '+ Decision', w: 60 },
+            { key: 'document', label: '+ Document', w: 64 },
+            { key: 'subprocess', label: '+ Subproc.', w: 60 },
+            { key: 'arrow', label: '→ Arrow', w: 50 },
+          ];
+          let cx = tx + 6;
+          const totalW = modes.reduce((s, m) => s + m.w + btnGap, 0) + (addMode ? 26 : 0) + 6;
+          return (
+            <g data-no-export="true">
+              <rect x={tx} y={ty} width={totalW} height="26" rx="6" fill="rgba(255,255,255,0.93)" stroke="#d1d5db" strokeWidth="1"
+                onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }} />
+              {modes.map((m) => {
+                const bx = cx;
+                cx += m.w + btnGap;
+                const active = addMode === m.key;
+                const isArr = m.key === 'arrow';
+                return (
+                  <g key={m.key} style={{ cursor: 'pointer' }} onClick={(e) => {
+                    e.stopPropagation();
+                    setAddMode(active ? null : m.key);
+                    setArrowStart(null);
+                  }}>
+                    <rect x={bx} y={ty + 3} width={m.w} height={btnH} rx="4"
+                      fill={active ? (isArr ? '#3b82f6' : '#059669') : 'white'}
+                      stroke={isArr ? '#3b82f6' : '#059669'} strokeWidth="1" />
+                    <text x={bx + m.w / 2} y={ty + 17} textAnchor="middle"
+                      fill={active ? 'white' : (isArr ? '#3b82f6' : '#059669')}
+                      fontSize="9" fontFamily="Arial" fontWeight="600">{m.label}</text>
+                  </g>
+                );
+              })}
+              {addMode && (
+                <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setAddMode(null); setArrowStart(null); }}>
+                  <rect x={cx} y={ty + 3} width="22" height={btnH} rx="4" fill="#ef4444" />
+                  <text x={cx + 11} y={ty + 17} textAnchor="middle" fill="white" fontSize="11" fontFamily="Arial" fontWeight="bold">×</text>
+                </g>
+              )}
+            </g>
+          );
+        })()}
+
+        {/* Status text when in add mode */}
+        {addMode && (
+          <g data-no-export="true">
+            <rect x={svgWidth / 2 - 130} y={svgHeight - 52} width="260" height="22" rx="11" fill="rgba(0,0,0,0.7)" />
+            <text x={svgWidth / 2} y={svgHeight - 37} textAnchor="middle" fill="white" fontSize="11" fontFamily="Arial">
+              {addMode === 'arrow'
+                ? (arrowStart ? 'Now click the target shape' : 'Click source shape, then target shape')
+                : `Click anywhere to place a ${addMode}`}
+            </text>
+          </g>
+        )}
+
         {/* Reset Layout button (visible when any edits have been made) */}
-        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0) && (
+        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
           <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
             <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
             <text
