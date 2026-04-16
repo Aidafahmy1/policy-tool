@@ -61,6 +61,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const [editingStepId, setEditingStepId] = useState<string | null>(null);
     const [editText, setEditText] = useState('');
     const editInputRef = useRef<HTMLTextAreaElement | null>(null);
+    const [selectedArrow, setSelectedArrow] = useState<string | null>(null);
+    const [deletedConnections, setDeletedConnections] = useState<Set<string>>(new Set());
     const [dragInfo, setDragInfo] = useState<{
       type: 'shape';
       stepId: string;
@@ -80,6 +82,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setArrowOverrides({});
       setLabelOverrides({});
       setEditingStepId(null);
+      setSelectedArrow(null);
+      setDeletedConnections(new Set());
     }, [data]);
 
     // Convert screen coordinates to SVG coordinates
@@ -134,6 +138,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const handleShapePointerDown = useCallback((e: React.PointerEvent, stepId: string) => {
       if (editingStepId) return; // don't drag while editing
       e.stopPropagation();
+      setSelectedArrow(null);
       const svgPt = screenToSVG(e.clientX, e.clientY);
       const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
       setDragInfo({ type: 'shape', stepId, startMouse: svgPt, startOffset: { ...offset } });
@@ -192,8 +197,56 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setArrowOverrides({});
       setLabelOverrides({});
       setEditingStepId(null);
+      setSelectedArrow(null);
+      setDeletedConnections(new Set());
       onLayoutChange?.({});
     }, [onLayoutChange]);
+
+    // Keyboard listener for arrow deletion (Delete/Backspace) and deselection (Escape)
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (selectedArrow && (e.key === 'Delete' || e.key === 'Backspace') && !editingStepId) {
+          e.preventDefault();
+          setDeletedConnections(prev => {
+            const next = new Set(prev);
+            next.add(selectedArrow);
+            return next;
+          });
+          setArrowOverrides(prev => {
+            const next = { ...prev };
+            delete next[selectedArrow];
+            return next;
+          });
+          setSelectedArrow(null);
+        }
+        if (e.key === 'Escape') {
+          setSelectedArrow(null);
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [selectedArrow, editingStepId]);
+
+    // Click on arrow path to select/deselect it
+    const handleArrowClick = useCallback((e: React.PointerEvent, connKey: string) => {
+      e.stopPropagation();
+      setSelectedArrow(prev => prev === connKey ? null : connKey);
+    }, []);
+
+    // Click on a path segment to insert a new waypoint and start dragging it
+    const handleSegmentClick = useCallback((e: React.PointerEvent, connKey: string, segmentIdx: number, currentPoints: {x: number, y: number}[]) => {
+      e.stopPropagation();
+      const svgPt = screenToSVG(e.clientX, e.clientY);
+      const points = arrowOverrides[connKey]
+        ? [...arrowOverrides[connKey]]
+        : currentPoints.map(p => ({ ...p }));
+      // Insert new point after segmentIdx
+      points.splice(segmentIdx + 1, 0, { x: svgPt.x, y: svgPt.y });
+      setArrowOverrides(prev => ({ ...prev, [connKey]: points }));
+      // Start dragging the new point immediately
+      setDragInfo({ type: 'waypoint', connKey, wpIdx: segmentIdx + 1, startMouse: svgPt, startPoint: { x: svgPt.x, y: svgPt.y } });
+      setSelectedArrow(connKey);
+    }, [screenToSVG, arrowOverrides]);
 
     // Calculate dimensions and step numbers
     const { maxColumns, stepPositions, stepNumbers } = useMemo(() => {
@@ -458,6 +511,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         xmlns="http://www.w3.org/2000/svg"
         style={{ backgroundColor: 'white', touchAction: 'none', userSelect: 'none', cursor: dragInfo ? 'grabbing' : 'default' }}
+        onClick={() => setSelectedArrow(null)}
       >
         {/* Title Header */}
         <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill="#059669" />
@@ -491,7 +545,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               >
                 {lane.name}
               </text>
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="white" stroke="#d1d5db" strokeWidth="1" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -499,8 +553,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y2={laneY + LANE_HEIGHT}
-                  stroke="#e5e7eb"
-                  strokeWidth="1"
+                  stroke="#f0f0f0"
+                  strokeWidth="0.5"
                   strokeDasharray="4,4"
                 />
               ))}
@@ -524,6 +578,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
         {/* Connection arrows — rendered BEFORE shapes so shapes sit on top */}
         {data.connections.map((conn, idx) => {
+          const connKey = `${conn.from}->${conn.to}`;
+          if (deletedConnections.has(connKey)) return null;
+
           const fromPos = getStepPosition(conn.from);
           const toPos = getStepPosition(conn.to);
           if (!fromPos || !toPos) return null;
@@ -659,27 +716,73 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           }
 
           // Use manual arrow overrides if available
-          const connKey = `${conn.from}->${conn.to}`;
           const overridePoints = arrowOverrides[connKey];
           const finalPath = overridePoints ? buildPath(overridePoints) : path;
           const pathPoints = overridePoints || parsePath(path);
 
-          // Arrow & label styling
+          // Styling
+          const isSelected = selectedArrow === connKey;
           const strokeColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
           const markerEnd = isYes ? 'url(#arrowhead-green)' : isNo ? 'url(#arrowhead-red)' : 'url(#arrowhead)';
           const labelBgColor = isYes ? '#dcfce7' : isNo ? '#fee2e2' : 'white';
           const labelBorderColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#d1d5db';
           const labelTextColor = isYes ? '#15803d' : isNo ? '#dc2626' : '#374151';
+          const midIdx = Math.floor(pathPoints.length / 2);
+          const arrowMidPt = pathPoints[midIdx] || pathPoints[0];
 
           return (
             <g key={idx}>
+              {/* White halo for visual separation from grid lines */}
+              <path d={finalPath} fill="none" stroke="white" strokeWidth="5" />
+              {/* Selection highlight */}
+              {isSelected && (
+                <path d={finalPath} fill="none" stroke="#3b82f6" strokeWidth="5" strokeOpacity="0.3" />
+              )}
+              {/* The actual arrow */}
               <path
                 d={finalPath}
                 fill="none"
                 stroke={strokeColor}
-                strokeWidth="1.5"
+                strokeWidth={isSelected ? "2.5" : "1.5"}
                 markerEnd={markerEnd}
               />
+              {/* Wide transparent hitbox for clicking/selecting arrows */}
+              <path
+                d={finalPath}
+                fill="none"
+                stroke="transparent"
+                strokeWidth="14"
+                style={{ cursor: 'pointer' }}
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  if (!isSelected) {
+                    setSelectedArrow(connKey);
+                  } else {
+                    // Find closest segment and add a new waypoint there
+                    const svgPt = screenToSVG(e.clientX, e.clientY);
+                    let bestSegIdx = 0;
+                    let bestDist = Infinity;
+                    for (let si = 0; si < pathPoints.length - 1; si++) {
+                      const a = pathPoints[si];
+                      const b = pathPoints[si + 1];
+                      const sdx = b.x - a.x;
+                      const sdy = b.y - a.y;
+                      const lenSq = sdx * sdx + sdy * sdy;
+                      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((svgPt.x - a.x) * sdx + (svgPt.y - a.y) * sdy) / lenSq));
+                      const projX = a.x + t * sdx;
+                      const projY = a.y + t * sdy;
+                      const dist = Math.sqrt((svgPt.x - projX) ** 2 + (svgPt.y - projY) ** 2);
+                      if (dist < bestDist) {
+                        bestDist = dist;
+                        bestSegIdx = si;
+                      }
+                    }
+                    handleSegmentClick(e, connKey, bestSegIdx, pathPoints);
+                  }
+                }}
+              />
+              {/* Label */}
               {conn.label && (
                 <>
                   <rect
@@ -705,21 +808,65 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   </text>
                 </>
               )}
-              {/* Draggable waypoint handles at each bend point */}
+              {/* Waypoint handles at ALL bend points */}
               {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
                 <circle
                   key={`wp-${connKey}-${i}`}
                   data-no-export="true"
                   cx={pt.x}
                   cy={pt.y}
-                  r={5}
-                  fill="white"
-                  stroke="#3b82f6"
+                  r={isSelected ? 6 : 4}
+                  fill={isSelected ? '#3b82f6' : 'white'}
+                  stroke={isSelected ? 'white' : '#3b82f6'}
                   strokeWidth={1.5}
                   style={{ cursor: 'grab' }}
-                  onPointerDown={(e) => handleWaypointPointerDown(e, connKey, i + 1, pathPoints)}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    handleWaypointPointerDown(e, connKey, i + 1, pathPoints);
+                  }}
                 />
               ))}
+              {/* Midpoint '+' handles to add new waypoints when selected */}
+              {isSelected && pathPoints.length >= 2 && pathPoints.slice(0, -1).map((pt, i) => {
+                const next = pathPoints[i + 1];
+                const mx = (pt.x + next.x) / 2;
+                const my = (pt.y + next.y) / 2;
+                const tooClose = pathPoints.some(p => Math.abs(p.x - mx) < 15 && Math.abs(p.y - my) < 15);
+                if (tooClose) return null;
+                return (
+                  <g
+                    key={`mid-${connKey}-${i}`}
+                    data-no-export="true"
+                    style={{ cursor: 'crosshair' }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      handleSegmentClick(e, connKey, i, pathPoints);
+                    }}
+                  >
+                    <circle cx={mx} cy={my} r={6} fill="#dbeafe" stroke="#3b82f6" strokeWidth={1} strokeDasharray="2,2" />
+                    <text x={mx} y={my + 3.5} textAnchor="middle" fill="#3b82f6" fontSize="10" fontWeight="bold">+</text>
+                  </g>
+                );
+              })}
+              {/* Delete button when arrow is selected */}
+              {isSelected && (
+                <g
+                  data-no-export="true"
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeletedConnections(prev => {
+                      const next = new Set(prev);
+                      next.add(connKey);
+                      return next;
+                    });
+                    setSelectedArrow(null);
+                  }}
+                >
+                  <circle cx={arrowMidPt.x} cy={arrowMidPt.y - 18} r={9} fill="#ef4444" stroke="white" strokeWidth="1.5" />
+                  <text x={arrowMidPt.x} y={arrowMidPt.y - 14} textAnchor="middle" fill="white" fontSize="12" fontFamily="Arial" fontWeight="bold">×</text>
+                </g>
+              )}
             </g>
           );
         })}
@@ -741,6 +888,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   style={{ cursor: isEditing ? 'text' : (dragInfo?.type === 'shape' && dragInfo.stepId === step.id) ? 'grabbing' : 'grab' }}
                   onPointerDown={(e) => handleShapePointerDown(e, step.id)}
                   onDoubleClick={(e) => handleShapeDoubleClick(e, step.id, currentLabel)}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {/* Transparent hitbox for reliable pointer event detection */}
                   <rect
@@ -795,7 +943,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         ))}
 
         {/* Reset Layout button (visible when any edits have been made) */}
-        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0) && (
+        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0) && (
           <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
             <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
             <text
