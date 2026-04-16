@@ -318,7 +318,8 @@ export default function ManualGenerator({
     const hasUploadedImage = uploadedImageBase64;
     const hasConversationDiagram = conversationId && mermaidCode;
     
-    if (!hasUploadedImage && !hasConversationDiagram) {
+    const hasStructuredData = swimlaneData && swimlaneData.lanes && swimlaneData.lanes.length > 0;
+    if (!hasStructuredData && !hasUploadedImage && !hasConversationDiagram) {
       setError('Please upload a flowchart image first');
       return;
     }
@@ -327,30 +328,10 @@ export default function ManualGenerator({
     setError(null);
 
     try {
-      // If we have an uploaded image, use the direct image-to-manual API
-      if (hasUploadedImage) {
-        const response = await fetch('/api/generate-manual-from-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: uploadedImageBase64,
-            customInstructions: customInstructions.trim() || undefined,
-            orgStructure: orgStructure.trim() || undefined,
-            orgStructureImageBase64: orgStructureImageBase64 || undefined,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (data.error) {
-          setError(data.error);
-          setIsGenerating(false);
-          return;
-        }
-
-        setManualData(data.manual);
-      } else {
-        // Fallback to conversation-based manual generation
+      // PRIORITY: If we have structured swimlane data, ALWAYS use the conversation path
+      // because it force-overwrites step names from the flowchart (guaranteed exact match).
+      // Only fall back to image-reading when there's NO structured data.
+      if (swimlaneData && swimlaneData.lanes && swimlaneData.lanes.length > 0) {
         let messages: Array<{ role: string; content: string }> = [];
         let orgData = orgStructure;
 
@@ -365,7 +346,6 @@ export default function ManualGenerator({
             messages = dbMessages.map((m) => ({ role: m.role, content: m.content }));
           }
 
-          // Auto-load org structure from chat attachments if user hasn't manually provided one
           if (!orgData.trim()) {
             const { data: chatAttachments } = await supabase
               .from('attachments')
@@ -373,7 +353,6 @@ export default function ManualGenerator({
               .eq('conversation_id', conversationId);
 
             if (chatAttachments && chatAttachments.length > 0) {
-              // Look for org structure documents in attachments
               const orgKeywords = ['org', 'structure', 'hierarchy', 'department', 'role', 'position', 'chart', 'raci', 'stakeholder', 'team'];
               for (const att of chatAttachments) {
                 const nameLC = att.file_name.toLowerCase();
@@ -403,6 +382,28 @@ export default function ManualGenerator({
             orgStructure: orgData,
             swimlaneData: swimlaneData,
             processName: swimlaneData?.title || propProcessName,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          setError(data.error);
+          setIsGenerating(false);
+          return;
+        }
+
+        setManualData(data.manual);
+      } else if (hasUploadedImage) {
+        // Fallback: no structured data, use image-reading AI
+        const response = await fetch('/api/generate-manual-from-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: uploadedImageBase64,
+            customInstructions: customInstructions.trim() || undefined,
+            orgStructure: orgStructure.trim() || undefined,
+            orgStructureImageBase64: orgStructureImageBase64 || undefined,
           }),
         });
 
