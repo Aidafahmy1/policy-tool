@@ -262,15 +262,50 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         });
       });
       
-      // Second pass: assign sequential step numbers (skip start/end)
+      // Second pass: assign sequential step numbers following the FLOW (BFS from start)
       let stepNum = 1;
-      // Sort all steps by x position (left-to-right), then by lane index
       const allSteps = data.lanes.flatMap((lane, laneIndex) =>
         lane.steps.map(step => ({ ...step, laneIndex }))
       );
-      allSteps.sort((a, b) => a.x - b.x || a.laneIndex - b.laneIndex);
+
+      // Build adjacency list from connections
+      const adj: Record<string, string[]> = {};
+      for (const conn of data.connections) {
+        if (!adj[conn.from]) adj[conn.from] = [];
+        adj[conn.from].push(conn.to);
+      }
+
+      // Find start node(s)
+      const startNodes = allSteps.filter(s => s.type === 'start').map(s => s.id);
+
+      // BFS traversal following the process flow
+      const visited = new Set<string>();
+      const queue: string[] = [...startNodes];
+      startNodes.forEach(id => visited.add(id));
+
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        const currentStep = allSteps.find(s => s.id === currentId);
+        if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+          numbers[currentId] = stepNum++;
+        }
+        // Get neighbors sorted by: x position first, then lane index (for consistent ordering at branches)
+        const neighbors = (adj[currentId] || [])
+          .filter(id => !visited.has(id))
+          .map(id => {
+            const s = allSteps.find(st => st.id === id);
+            return { id, x: s?.x ?? 999, laneIndex: s?.laneIndex ?? 999 };
+          })
+          .sort((a, b) => a.x - b.x || a.laneIndex - b.laneIndex);
+        for (const n of neighbors) {
+          visited.add(n.id);
+          queue.push(n.id);
+        }
+      }
+
+      // Fallback: number any remaining steps not reachable from start (shouldn't happen normally)
       for (const step of allSteps) {
-        if (step.type !== 'start' && step.type !== 'end') {
+        if (step.type !== 'start' && step.type !== 'end' && !numbers[step.id]) {
           numbers[step.id] = stepNum++;
         }
       }

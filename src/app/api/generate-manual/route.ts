@@ -31,28 +31,87 @@ function extractStepsFromSwimlane(swimlaneData: any): {
   const stepIdToNum: Record<string, number> = {};
   const stepIdToLane: Record<string, string> = {};
   const documentLabels = new Set<string>();
-  let stepNum = 1;
 
+  // Build lookup maps: stepId → step data, stepId → lane name
+  const stepMap: Record<string, any> = {};
+  const laneMap: Record<string, string> = {};
   for (const lane of swimlaneData.lanes) {
     stakeholders.push(lane.name);
-    if (lane.steps && lane.steps.length > 0) {
+    if (lane.steps) {
       for (const step of lane.steps) {
-        if (step.type !== 'start' && step.type !== 'end') {
-          stepIdToNum[step.id] = stepNum;
-          stepIdToLane[step.id] = lane.name;
-          const isDoc = step.type === 'document';
-          if (isDoc) documentLabels.add(step.label);
-          steps.push({
-            stepNumber: stepNum,
-            stepName: step.label,
-            responsible: lane.name,
-            type: step.type,
-            id: step.id,
-            isDocument: isDoc,
-          });
-          stepNum++;
-        }
+        stepMap[step.id] = step;
+        laneMap[step.id] = lane.name;
       }
+    }
+  }
+
+  // Build adjacency list from connections
+  const adj: Record<string, string[]> = {};
+  if (swimlaneData.connections) {
+    for (const conn of swimlaneData.connections) {
+      if (!adj[conn.from]) adj[conn.from] = [];
+      adj[conn.from].push(conn.to);
+    }
+  }
+
+  // Find start nodes
+  const allStepsList = Object.values(stepMap) as any[];
+  const startNodes = allStepsList.filter((s: any) => s.type === 'start').map((s: any) => s.id);
+
+  // BFS traversal following the process flow for chronological ordering
+  const visited = new Set<string>();
+  const queue: string[] = [...startNodes];
+  startNodes.forEach((id: string) => visited.add(id));
+  let stepNum = 1;
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    const currentStep = stepMap[currentId];
+    if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+      stepIdToNum[currentId] = stepNum;
+      stepIdToLane[currentId] = laneMap[currentId];
+      const isDoc = currentStep.type === 'document';
+      if (isDoc) documentLabels.add(currentStep.label);
+      steps.push({
+        stepNumber: stepNum,
+        stepName: currentStep.label,
+        responsible: laneMap[currentId],
+        type: currentStep.type,
+        id: currentId,
+        isDocument: isDoc,
+      });
+      stepNum++;
+    }
+    // Sort neighbors by x position then lane index for consistent ordering
+    const neighbors = (adj[currentId] || [])
+      .filter((id: string) => !visited.has(id))
+      .map((id: string) => {
+        const s = stepMap[id];
+        return { id, x: s?.x ?? 999 };
+      })
+      .sort((a: any, b: any) => a.x - b.x);
+    for (const n of neighbors) {
+      visited.add(n.id);
+      queue.push(n.id);
+    }
+  }
+
+  // Fallback: add any unreachable steps
+  for (const step of allStepsList) {
+    if (step.type !== 'start' && step.type !== 'end' && !stepIdToNum[step.id]) {
+      stepIdToNum[step.id] = stepNum;
+      stepIdToLane[step.id] = laneMap[step.id];
+      const isDoc = step.type === 'document';
+      if (isDoc) documentLabels.add(step.label);
+      steps.push({
+        stepNumber: stepNum,
+        stepName: step.label,
+        responsible: laneMap[step.id],
+        type: step.type,
+        id: step.id,
+        isDocument: isDoc,
+      });
+      stepNum++;
     }
   }
 

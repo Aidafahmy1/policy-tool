@@ -65,14 +65,41 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
     });
   });
   
-  // Assign step numbers (left-to-right, top-to-bottom)
+  // Assign step numbers following the FLOW (BFS from start) for chronological order
   let stepNum = 1;
   const allSteps = data.lanes.flatMap((lane, laneIndex) =>
     lane.steps.map(step => ({ ...step, laneIndex }))
   );
-  allSteps.sort((a, b) => a.x - b.x || a.laneIndex - b.laneIndex);
+
+  const adj: Record<string, string[]> = {};
+  for (const conn of data.connections) {
+    if (!adj[conn.from]) adj[conn.from] = [];
+    adj[conn.from].push(conn.to);
+  }
+  const startNodes = allSteps.filter(s => s.type === 'start').map(s => s.id);
+  const visited = new Set<string>();
+  const queue: string[] = [...startNodes];
+  startNodes.forEach(id => visited.add(id));
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    const currentStep = allSteps.find(s => s.id === currentId);
+    if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+      stepNumbers[currentStep.id] = stepNum++;
+    }
+    const neighbors = (adj[currentId] || [])
+      .filter(id => !visited.has(id))
+      .map(id => {
+        const s = allSteps.find(st => st.id === id);
+        return { id, x: s?.x ?? 999, laneIndex: s?.laneIndex ?? 999 };
+      })
+      .sort((a, b) => a.x - b.x || a.laneIndex - b.laneIndex);
+    for (const n of neighbors) {
+      visited.add(n.id);
+      queue.push(n.id);
+    }
+  }
   for (const step of allSteps) {
-    if (step.type !== 'start' && step.type !== 'end') {
+    if (step.type !== 'start' && step.type !== 'end' && !stepNumbers[step.id]) {
       stepNumbers[step.id] = stepNum++;
     }
   }
