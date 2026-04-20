@@ -40,6 +40,7 @@ const SHAPE_HEIGHT = 64;
 const HEADER_HEIGHT = 40;
 const DECISION_SIZE = 64;
 const ARROW_GAP = 14; // min gap between arrow and shape edge
+const TOOLBAR_HEIGHT = 36; // space for the add-shape toolbar
 
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
   ({ data, onLayoutChange }, ref) => {
@@ -346,7 +347,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     }, [data]);
 
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
-    const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
+    const svgHeight = HEADER_HEIGHT + TOOLBAR_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
 
     // Get step center position (includes drag offset) — works for both grid steps and extra shapes
     const getStepPosition = (stepId: string) => {
@@ -354,7 +355,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       if (pos) {
         const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
         const x = LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2) + offset.dx;
-        const y = HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2) + offset.dy;
+        const y = HEADER_HEIGHT + TOOLBAR_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2) + offset.dy;
         return { x, y };
       }
       const extra = extraShapes.find(s => s.id === stepId);
@@ -616,7 +617,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
         {/* Layer 1: Lane backgrounds and headers */}
         {data.lanes.map((lane, laneIndex) => {
-          const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
+          const laneY = HEADER_HEIGHT + TOOLBAR_HEIGHT + (laneIndex * LANE_HEIGHT);
           return (
             <g key={`bg-${laneIndex}`}>
               <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="#059669" stroke="#047857" strokeWidth="1" />
@@ -725,7 +726,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               // Target is to the LEFT (loopback) → down, left, then up to target
               const routeY = Math.max(
                 startY + GAP + 10,
-                HEADER_HEIGHT + Math.max(
+                HEADER_HEIGHT + TOOLBAR_HEIGHT + Math.max(
                   stepPositions[conn.from]?.laneIndex ?? 0,
                   stepPositions[conn.to]?.laneIndex ?? 0
                 ) * LANE_HEIGHT + LANE_HEIGHT - 8
@@ -763,7 +764,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const startX = fromPos.x - fromHalfW;
             const endX = toPos.x + toHalfW;
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
-            const routeY = HEADER_HEIGHT + fromLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8;
+            const routeY = HEADER_HEIGHT + TOOLBAR_HEIGHT + fromLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8;
             path = `M ${startX} ${fromPos.y} L ${startX - GAP} ${fromPos.y} L ${startX - GAP} ${routeY} L ${endX + GAP} ${routeY} L ${endX + GAP} ${toPos.y} L ${endX} ${toPos.y}`;
             labelX = (startX + endX) / 2;
             labelY = routeY + 12;
@@ -796,7 +797,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
             const toLaneIdx = stepPositions[conn.to]?.laneIndex ?? 0;
             const maxLaneIdx = Math.max(fromLaneIdx, toLaneIdx);
-            const routeY = HEADER_HEIGHT + (maxLaneIdx + 1) * LANE_HEIGHT - 8;
+            const routeY = HEADER_HEIGHT + TOOLBAR_HEIGHT + (maxLaneIdx + 1) * LANE_HEIGHT - 8;
             path = `M ${fromPos.x} ${startY} L ${fromPos.x} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
             labelX = (fromPos.x + toPos.x) / 2;
             labelY = routeY - 8;
@@ -1150,25 +1151,28 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           );
         })()}
 
-        {/* Toolbar: Add Shape / Arrow */}
+        {/* Toolbar: Add Shape / Arrow — prominent dark bar below header */}
         {(() => {
-          const tx = LANE_HEADER_WIDTH + 8;
-          const ty = HEADER_HEIGHT + 5;
-          const btnH = 20;
-          const btnGap = 3;
+          const tx = LANE_HEADER_WIDTH;
+          const ty = HEADER_HEIGHT;
+          const barH = 36;
+          const btnH = 26;
+          const btnGap = 6;
+          const barW = svgWidth - LANE_HEADER_WIDTH;
           const modes: Array<{ key: typeof addMode; label: string; w: number }> = [
-            { key: 'process', label: '+ Process', w: 58 },
-            { key: 'decision', label: '+ Decision', w: 60 },
-            { key: 'document', label: '+ Document', w: 64 },
-            { key: 'subprocess', label: '+ Subproc.', w: 60 },
-            { key: 'arrow', label: '→ Arrow', w: 50 },
+            { key: 'process', label: '+ Process', w: 78 },
+            { key: 'decision', label: '+ Decision', w: 80 },
+            { key: 'document', label: '+ Document', w: 82 },
+            { key: 'subprocess', label: '+ Subprocess', w: 90 },
+            { key: 'arrow', label: '→ Arrow', w: 70 },
           ];
-          let cx = tx + 6;
-          const totalW = modes.reduce((s, m) => s + m.w + btnGap, 0) + (addMode ? 26 : 0) + 6;
+          let cx = tx + 52;
           return (
             <g data-no-export="true">
-              <rect x={tx} y={ty} width={totalW} height="26" rx="6" fill="rgba(255,255,255,0.93)" stroke="#d1d5db" strokeWidth="1"
+              <rect x="0" y={ty} width={LANE_HEADER_WIDTH} height={barH} fill="#059669" stroke="#047857" strokeWidth="1" />
+              <rect x={tx} y={ty} width={barW} height={barH} fill="#1e293b" opacity="0.92"
                 onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }} />
+              <text x={tx + 12} y={ty + 23} fill="white" fontSize="12" fontFamily="Arial" fontWeight="700">Add:</text>
               {modes.map((m) => {
                 const bx = cx;
                 cx += m.w + btnGap;
@@ -1180,19 +1184,19 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                     setAddMode(active ? null : m.key);
                     setArrowStart(null);
                   }}>
-                    <rect x={bx} y={ty + 3} width={m.w} height={btnH} rx="4"
-                      fill={active ? (isArr ? '#3b82f6' : '#059669') : 'white'}
-                      stroke={isArr ? '#3b82f6' : '#059669'} strokeWidth="1" />
-                    <text x={bx + m.w / 2} y={ty + 17} textAnchor="middle"
-                      fill={active ? 'white' : (isArr ? '#3b82f6' : '#059669')}
-                      fontSize="9" fontFamily="Arial" fontWeight="600">{m.label}</text>
+                    <rect x={bx} y={ty + 5} width={m.w} height={btnH} rx="5"
+                      fill={active ? (isArr ? '#3b82f6' : '#059669') : 'rgba(255,255,255,0.15)'}
+                      stroke={active ? 'white' : 'rgba(255,255,255,0.4)'} strokeWidth="1.5" />
+                    <text x={bx + m.w / 2} y={ty + 22} textAnchor="middle"
+                      fill="white"
+                      fontSize="11" fontFamily="Arial" fontWeight="600">{m.label}</text>
                   </g>
                 );
               })}
               {addMode && (
                 <g style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setAddMode(null); setArrowStart(null); }}>
-                  <rect x={cx} y={ty + 3} width="22" height={btnH} rx="4" fill="#ef4444" />
-                  <text x={cx + 11} y={ty + 17} textAnchor="middle" fill="white" fontSize="11" fontFamily="Arial" fontWeight="bold">×</text>
+                  <rect x={cx} y={ty + 5} width="28" height={btnH} rx="5" fill="#ef4444" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" />
+                  <text x={cx + 14} y={ty + 22} textAnchor="middle" fill="white" fontSize="13" fontFamily="Arial" fontWeight="bold">×</text>
                 </g>
               )}
             </g>
@@ -1214,10 +1218,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {/* Reset Layout button (visible when any edits have been made) */}
         {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
           <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
-            <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
+            <rect x={svgWidth - 125} y={HEADER_HEIGHT + TOOLBAR_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
             <text
               x={svgWidth - 67}
-              y={HEADER_HEIGHT + 26}
+              y={HEADER_HEIGHT + TOOLBAR_HEIGHT + 26}
               textAnchor="middle"
               fill="white"
               fontSize="12"
