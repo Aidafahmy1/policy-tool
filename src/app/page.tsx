@@ -6,8 +6,9 @@ import Sidebar from '@/components/Sidebar';
 import ChatInterface from '@/components/ChatInterface';
 import ManualGenerator from '@/components/ManualGenerator';
 import ImageUploader from '@/components/ImageUploader';
-import SwimlaneSVG, { SwimlaneData } from '@/components/SwimlaneSVG';
-import { supabase } from '@/lib/supabase';
+import SwimlaneSVG, { SwimlaneData, DiagramEditState } from '@/components/SwimlaneSVG';
+import DiagramVersionHistory from '@/components/DiagramVersionHistory';
+import { supabase, Diagram } from '@/lib/supabase';
 
 const MermaidDiagram = dynamic(() => import('@/components/MermaidDiagram'), {
   ssr: false,
@@ -23,11 +24,29 @@ export default function Home() {
   const [processName, setProcessName] = useState<string | null>(null);
   const [uploadedImageBase64, setUploadedImageBase64] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  // Version history state
+  const [showHistory, setShowHistory] = useState(false);
+  const [versions, setVersions] = useState<Diagram[]>([]);
+  const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
+  const [restoredEditState, setRestoredEditState] = useState<DiagramEditState | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
   const svgDiagramRef = useRef<SVGSVGElement>(null);
   const htmlDiagramRef = useRef<HTMLDivElement>(null);
   const expandedSvgRef = useRef<SVGSVGElement>(null);
   const expandedHtmlRef = useRef<HTMLDivElement>(null);
   const prevConversationId = useRef<string | null>(null);
+
+  // Load versions for current conversation
+  const loadVersions = useCallback(async (convId: string) => {
+    setVersionsLoading(true);
+    const { data } = await supabase
+      .from('diagrams')
+      .select('*')
+      .eq('conversation_id', convId)
+      .order('created_at', { ascending: false });
+    if (data) setVersions(data as Diagram[]);
+    setVersionsLoading(false);
+  }, []);
 
   // Load diagram data when conversation changes
   useEffect(() => {
@@ -41,6 +60,10 @@ export default function Home() {
         setSwimlaneData(null);
         setProcessName(null);
         setUploadedImageBase64(null);
+        setVersions([]);
+        setCurrentVersionId(null);
+        setRestoredEditState(null);
+        setShowHistory(false);
         return;
       }
 
@@ -62,6 +85,7 @@ export default function Home() {
       if (diagrams && diagrams.length > 0) {
         const diagram = diagrams[0];
         setMermaidCode(diagram.mermaid_code);
+        setCurrentVersionId(diagram.id);
         
         // Try to parse swimlane data if stored
         if (diagram.swimlane_data) {
@@ -75,24 +99,107 @@ export default function Home() {
             console.error('Failed to parse swimlane data:', e);
           }
         }
+
+        // Restore edit state if saved
+        if (diagram.edit_state) {
+          try {
+            const editState = typeof diagram.edit_state === 'string'
+              ? JSON.parse(diagram.edit_state)
+              : diagram.edit_state;
+            setRestoredEditState(editState);
+          } catch (e) {
+            console.error('Failed to parse edit state:', e);
+          }
+        } else {
+          setRestoredEditState(null);
+        }
       } else {
         // No diagram for this conversation
         setMermaidCode(null);
         setSwimlaneData(null);
         setProcessName(null);
+        setCurrentVersionId(null);
+        setRestoredEditState(null);
       }
+
+      // Load version list
+      loadVersions(conversationId);
     };
 
     loadDiagramData();
-  }, [conversationId]);
+  }, [conversationId, loadVersions]);
 
-  const handleNewDiagram = (code: string, swimlane?: unknown) => {
+  // Save a version snapshot to Supabase
+  const handleSaveVersion = useCallback(async (editState: DiagramEditState) => {
+    if (!conversationId || !swimlaneData) return;
+    const label = prompt('Version label (optional):') ?? undefined;
+
+    // Count existing versions for this conversation
+    const nextVersion = versions.length + 1;
+
+    const { data: saved, error } = await supabase
+      .from('diagrams')
+      .insert({
+        conversation_id: conversationId,
+        mermaid_code: mermaidCode || '',
+        swimlane_data: JSON.stringify(swimlaneData),
+        version: nextVersion,
+        label: label?.trim() || `Manual save v${nextVersion}`,
+        edit_state: editState,
+      })
+      .select()
+      .single();
+
+    if (saved && !error) {
+      setCurrentVersionId(saved.id);
+      loadVersions(conversationId);
+    }
+  }, [conversationId, swimlaneData, mermaidCode, versions.length, loadVersions]);
+
+  // Restore a version from history
+  const handleRestoreVersion = useCallback((version: Diagram) => {
+    setCurrentVersionId(version.id);
+    setMermaidCode(version.mermaid_code);
+
+    if (version.swimlane_data) {
+      try {
+        const parsed = typeof version.swimlane_data === 'string'
+          ? JSON.parse(version.swimlane_data)
+          : version.swimlane_data;
+        setSwimlaneData(parsed);
+        setProcessName(parsed.title || null);
+      } catch (e) {
+        console.error('Failed to parse swimlane data:', e);
+      }
+    }
+
+    if (version.edit_state) {
+      try {
+        const editState = typeof version.edit_state === 'string'
+          ? JSON.parse(version.edit_state)
+          : version.edit_state;
+        setRestoredEditState(editState);
+      } catch (e) {
+        console.error('Failed to parse edit state:', e);
+        setRestoredEditState(null);
+      }
+    } else {
+      setRestoredEditState(null);
+    }
+  }, []);
+
+  const handleNewDiagram = useCallback((code: string, swimlane?: unknown) => {
     setMermaidCode(code);
     if (swimlane) {
       setSwimlaneData(swimlane as SwimlaneData);
     }
     setUploadError(null);
-  };
+    setRestoredEditState(null);
+    // Refresh version list after AI generates a new diagram
+    if (conversationId) {
+      loadVersions(conversationId);
+    }
+  }, [conversationId, loadVersions]);
 
   const handleImageUploaded = (imageBase64: string) => {
     setUploadedImageBase64(imageBase64);
@@ -223,71 +330,91 @@ export default function Home() {
             </div>
           )}
 
-          {/* Diagram Preview */}
-          <div className="flex-1 min-h-[300px] relative bg-white rounded-lg border border-gray-200 overflow-hidden">
-            {hasDiagram && (
-              <>
-                {processName && (
-                  <div className="absolute top-2 left-2 z-10 bg-emerald-100 text-emerald-800 px-3 py-1 rounded-lg text-sm font-medium">
-                    {processName}
+          {/* Diagram Preview + Version History */}
+          <div className="flex-1 min-h-[300px] flex rounded-lg border border-gray-200 overflow-hidden">
+            {/* Diagram area */}
+            <div className="flex-1 relative bg-white overflow-hidden">
+              {hasDiagram && (
+                <>
+                  {processName && (
+                    <div className="absolute top-2 left-2 z-10 bg-emerald-100 text-emerald-800 px-3 py-1 rounded-lg text-sm font-medium">
+                      {processName}
+                    </div>
+                  )}
+                  <div className="absolute top-2 right-2 z-10 flex gap-2">
+                    {/* Download Button */}
+                    {swimlaneData && (
+                      <button
+                        onClick={handleDownloadFlowchart}
+                        disabled={isDownloading}
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
+                      >
+                        {isDownloading ? (
+                          <>
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Downloading...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Download PNG
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {/* Full View Button */}
+                    <button
+                      onClick={() => setIsExpanded(true)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                      </svg>
+                      Full View
+                    </button>
+                  </div>
+                </>
+              )}
+              <div className="w-full h-full overflow-auto p-2">
+                {swimlaneData ? (
+                  <SwimlaneSVG
+                    ref={svgDiagramRef}
+                    data={swimlaneData}
+                    onSaveVersion={conversationId ? handleSaveVersion : undefined}
+                    onToggleHistory={conversationId ? () => setShowHistory(h => !h) : undefined}
+                    restoredEditState={restoredEditState}
+                    showHistoryActive={showHistory}
+                  />
+                ) : mermaidCode ? (
+                  <MermaidDiagram ref={htmlDiagramRef} code={mermaidCode} />
+                ) : (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center text-gray-500">
+                      <div className="text-4xl mb-4">📊</div>
+                      <p className="text-lg font-medium">No diagram yet</p>
+                      <p className="text-sm mt-2">
+                        Upload an image above or chat to generate a flowchart
+                      </p>
+                    </div>
                   </div>
                 )}
-                <div className="absolute top-2 right-2 z-10 flex gap-2">
-                  {/* Download Button */}
-                  {swimlaneData && (
-                    <button
-                      onClick={handleDownloadFlowchart}
-                      disabled={isDownloading}
-                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
-                    >
-                      {isDownloading ? (
-                        <>
-                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          Downloading...
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          Download PNG
-                        </>
-                      )}
-                    </button>
-                  )}
-                  {/* Full View Button */}
-                  <button
-                    onClick={() => setIsExpanded(true)}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                    </svg>
-                    Full View
-                  </button>
-                </div>
-              </>
-            )}
-            <div className="w-full h-full overflow-auto p-2">
-              {swimlaneData ? (
-                <SwimlaneSVG ref={svgDiagramRef} data={swimlaneData} />
-              ) : mermaidCode ? (
-                <MermaidDiagram ref={htmlDiagramRef} code={mermaidCode} />
-              ) : (
-                <div className="h-full flex items-center justify-center">
-                  <div className="text-center text-gray-500">
-                    <div className="text-4xl mb-4">📊</div>
-                    <p className="text-lg font-medium">No diagram yet</p>
-                    <p className="text-sm mt-2">
-                      Upload an image above or chat to generate a flowchart
-                    </p>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
+            {/* Version History Panel */}
+            {showHistory && swimlaneData && (
+              <DiagramVersionHistory
+                versions={versions}
+                currentVersionId={currentVersionId}
+                onRestore={handleRestoreVersion}
+                onClose={() => setShowHistory(false)}
+                isLoading={versionsLoading}
+              />
+            )}
           </div>
 
           {/* Manual Generator */}

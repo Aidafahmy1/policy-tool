@@ -167,11 +167,13 @@ export default function ChatInterface({
       if (data.mermaidCode || data.swimlaneData) {
         onNewDiagram(data.mermaidCode, data.swimlaneData);
         
-        // Save diagram to database with swimlane data
+        // Save diagram to database with swimlane data and auto-label
+        const title = data.swimlaneData?.title || 'Diagram';
         await supabase.from('diagrams').insert({
           conversation_id: currentConversationId,
           mermaid_code: data.mermaidCode || '',
           swimlane_data: data.swimlaneData ? JSON.stringify(data.swimlaneData) : null,
+          label: `AI generated — ${title}`,
         });
       }
 

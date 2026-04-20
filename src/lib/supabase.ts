@@ -21,12 +21,23 @@ export interface Message {
   created_at: string;
 }
 
+export interface DiagramEditState {
+  posOffsets: Record<string, { dx: number; dy: number }>;
+  arrowOverrides: Record<string, { x: number; y: number }[]>;
+  labelOverrides: Record<string, string>;
+  deletedConnections: string[];
+  extraShapes: Array<{ id: string; label: string; type: string; x: number; y: number }>;
+  extraConnections: Array<{ from: string; to: string; label?: string }>;
+}
+
 export interface Diagram {
   id: string;
   conversation_id: string;
   mermaid_code: string;
   swimlane_data?: string | null;
   version: number;
+  label?: string | null;
+  edit_state?: DiagramEditState | null;
   created_at: string;
 }
 

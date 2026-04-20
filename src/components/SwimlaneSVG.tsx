@@ -26,9 +26,22 @@ export interface SwimlaneData {
   connections: Connection[];
 }
 
+export interface DiagramEditState {
+  posOffsets: Record<string, { dx: number; dy: number }>;
+  arrowOverrides: Record<string, { x: number; y: number }[]>;
+  labelOverrides: Record<string, string>;
+  deletedConnections: string[];
+  extraShapes: Array<{ id: string; label: string; type: string; x: number; y: number }>;
+  extraConnections: Array<{ from: string; to: string; label?: string }>;
+}
+
 interface SwimlaneSVGProps {
   data: SwimlaneData;
   onLayoutChange?: (offsets: Record<string, {dx: number, dy: number}>) => void;
+  onSaveVersion?: (editState: DiagramEditState) => void;
+  onToggleHistory?: () => void;
+  restoredEditState?: DiagramEditState | null;
+  showHistoryActive?: boolean;
 }
 
 // Dimensions with extra spacing to avoid arrow-shape overlap
@@ -42,7 +55,7 @@ const DECISION_SIZE = 64;
 const ARROW_GAP = 14; // min gap between arrow and shape edge
 
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
-  ({ data, onLayoutChange }, ref) => {
+  ({ data, onLayoutChange, onSaveVersion, onToggleHistory, restoredEditState, showHistoryActive }, ref) => {
     const svgRef = useRef<SVGSVGElement | null>(null);
 
     // Combine forwarded ref with internal ref
@@ -101,6 +114,21 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setAddMode(null);
       setArrowStart(null);
     }, [data]);
+
+    // Restore edit state from version history
+    useEffect(() => {
+      if (!restoredEditState) return;
+      setPosOffsets(restoredEditState.posOffsets || {});
+      setArrowOverrides(restoredEditState.arrowOverrides || {});
+      setLabelOverrides(restoredEditState.labelOverrides || {});
+      setDeletedConnections(new Set(restoredEditState.deletedConnections || []));
+      setExtraShapes((restoredEditState.extraShapes || []) as typeof extraShapes);
+      setExtraConnections(restoredEditState.extraConnections || []);
+      setEditingStepId(null);
+      setSelectedArrow(null);
+      setAddMode(null);
+      setArrowStart(null);
+    }, [restoredEditState]);
 
     // Convert screen coordinates to SVG coordinates
     const screenToSVG = useCallback((clientX: number, clientY: number) => {
@@ -751,6 +779,59 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 ? (arrowStart ? '→ Now click the target shape' : '→ Click the source shape')
                 : `Click anywhere on the diagram to place`}
             </span>
+          )}
+          {/* Divider + Version History buttons */}
+          {(onSaveVersion || onToggleHistory) && (
+            <>
+              <div style={{ width: '1px', height: '22px', background: 'rgba(255,255,255,0.25)', margin: '0 4px' }} />
+              {onSaveVersion && (
+                <button
+                  onClick={() => {
+                    const editState: DiagramEditState = {
+                      posOffsets: { ...posOffsets },
+                      arrowOverrides: Object.fromEntries(Object.entries(arrowOverrides).map(([k, v]) => [k, v.map(p => ({ ...p }))])),
+                      labelOverrides: { ...labelOverrides },
+                      deletedConnections: Array.from(deletedConnections),
+                      extraShapes: extraShapes.map(s => ({ ...s })),
+                      extraConnections: extraConnections.map(c => ({ ...c })),
+                    };
+                    onSaveVersion(editState);
+                  }}
+                  style={{
+                    padding: '5px 14px', borderRadius: '6px', cursor: 'pointer',
+                    border: '1.5px solid rgba(255,255,255,0.35)',
+                    background: 'rgba(59,130,246,0.25)',
+                    color: 'white', fontSize: '12px', fontWeight: 600,
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                    <polyline points="17 21 17 13 7 13 7 21" />
+                    <polyline points="7 3 7 8 15 8" />
+                  </svg>
+                  Save Version
+                </button>
+              )}
+              {onToggleHistory && (
+                <button
+                  onClick={onToggleHistory}
+                  style={{
+                    padding: '5px 14px', borderRadius: '6px', cursor: 'pointer',
+                    border: showHistoryActive ? '1.5px solid white' : '1.5px solid rgba(255,255,255,0.35)',
+                    background: showHistoryActive ? 'rgba(168,85,247,0.4)' : 'rgba(168,85,247,0.15)',
+                    color: 'white', fontSize: '12px', fontWeight: 600,
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  History
+                </button>
+              )}
+            </>
           )}
         </div>
       <svg
