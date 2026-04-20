@@ -577,6 +577,68 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       }
     };
 
+    // ── Arrow routing helpers: shape avoidance + overlap spreading ──────
+    // Collect bounding boxes of all shapes for collision detection
+    const allShapeBounds: Array<{ id: string; cx: number; cy: number; hw: number; hh: number }> = [];
+    for (const lane of data.lanes) {
+      for (const step of lane.steps) {
+        const pos = getStepPosition(step.id);
+        if (!pos) continue;
+        const isD = step.type === 'decision';
+        allShapeBounds.push({ id: step.id, cx: pos.x, cy: pos.y,
+          hw: (isD ? DECISION_SIZE : SHAPE_WIDTH) / 2 + 6,
+          hh: (isD ? DECISION_SIZE : SHAPE_HEIGHT) / 2 + 6 });
+      }
+    }
+    for (const shape of extraShapes) {
+      const pos = getStepPosition(shape.id);
+      if (!pos) continue;
+      const isD = shape.type === 'decision';
+      allShapeBounds.push({ id: shape.id, cx: pos.x, cy: pos.y,
+        hw: (isD ? DECISION_SIZE : SHAPE_WIDTH) / 2 + 6,
+        hh: (isD ? DECISION_SIZE : SHAPE_HEIGHT) / 2 + 6 });
+    }
+
+    // Does a vertical segment at x (y1→y2) hit any shape (excluding skip set)?
+    const vSegHits = (x: number, y1: number, y2: number, skip: Set<string>) => {
+      const [lo, hi] = y1 < y2 ? [y1, y2] : [y2, y1];
+      return allShapeBounds.some(s => !skip.has(s.id) && x > s.cx - s.hw && x < s.cx + s.hw && hi > s.cy - s.hh && lo < s.cy + s.hh);
+    };
+
+    // Does a horizontal segment at y (x1→x2) hit any shape?
+    const hSegHits = (y: number, x1: number, x2: number, skip: Set<string>) => {
+      const [lo, hi] = x1 < x2 ? [x1, x2] : [x2, x1];
+      return allShapeBounds.some(s => !skip.has(s.id) && y > s.cy - s.hh && y < s.cy + s.hh && hi > s.cx - s.hw && lo < s.cx + s.hw);
+    };
+
+    // Find a clear vertical X for routing that doesn't intersect any shape.
+    // Prefers column boundaries (gaps between cells) which are naturally clear.
+    const findClearVert = (preferred: number, y1: number, y2: number, skip: Set<string>): number => {
+      if (!vSegHits(preferred, y1, y2, skip)) return preferred;
+      const candidates: number[] = [];
+      for (let col = 0; col <= maxColumns + 1; col++) {
+        candidates.push(LANE_HEADER_WIDTH + col * CELL_WIDTH);
+      }
+      candidates.sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
+      for (const cx of candidates) {
+        if (!vSegHits(cx, y1, y2, skip)) return cx;
+      }
+      return preferred;
+    };
+
+    // Track horizontal routing channels to spread overlapping loopback arrows
+    const hChannels: Array<{ y: number; xMin: number; xMax: number }> = [];
+    const getHSpread = (baseY: number, x1: number, x2: number): number => {
+      const xMin = Math.min(x1, x2);
+      const xMax = Math.max(x1, x2);
+      let overlap = 0;
+      for (const ch of hChannels) {
+        if (Math.abs(ch.y - baseY) < 8 && xMax > ch.xMin - 30 && xMin < ch.xMax + 30) overlap++;
+      }
+      hChannels.push({ y: baseY, xMin, xMax });
+      return overlap * 14;
+    };
+
     return (
       <div>
         {/* HTML Toolbar — always visible above the diagram */}
@@ -744,17 +806,18 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           // GAP = clearance from shape edges when routing
           const GAP = ARROW_GAP;
 
+          const skip = new Set([conn.from, conn.to]);
+
           if (isFromDecision && isYes) {
             // ===== YES path: exits RIGHT tip of diamond =====
             const startX = fromPos.x + fromHalfW;
             const startY = fromPos.y;
 
             if (isSameLane && dx > 0) {
-              // Same lane, target to the right → straight line
               path = `M ${startX} ${startY} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
             } else {
-              // Different lane → elbow: right, then vertical, then horizontal
-              const midX = fromPos.x + CELL_WIDTH / 2;
+              // Different lane → elbow with shape-avoiding vertical segment
+              const midX = findClearVert((fromPos.x + toPos.x) / 2, startY, toPos.y, skip);
               path = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${toPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
             }
             labelX = startX + 14;
@@ -766,25 +829,34 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const startY = fromPos.y + fromHalfH;
 
             if (isSameColumn) {
-              // Same column → straight down
               path = `M ${startX} ${startY} L ${toPos.x} ${toPos.y - toHalfH - GAP}`;
             } else if (dx < 0) {
-              // Target is to the LEFT (loopback) → down, left, then up to target
-              const routeY = Math.max(
-                startY + GAP + 10,
-                HEADER_HEIGHT + Math.max(
-                  stepPositions[conn.from]?.laneIndex ?? 0,
-                  stepPositions[conn.to]?.laneIndex ?? 0
-                ) * LANE_HEIGHT + LANE_HEIGHT - 8
+              // Loopback LEFT → down, across, up to target
+              const baseLaneIdx = Math.max(
+                stepPositions[conn.from]?.laneIndex ?? 0,
+                stepPositions[conn.to]?.laneIndex ?? 0
               );
+              let routeY = Math.max(
+                startY + GAP + 10,
+                HEADER_HEIGHT + baseLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8
+              );
+              routeY += getHSpread(routeY, startX, toPos.x);
               path = `M ${startX} ${startY} L ${startX} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
+              labelX = startX + 14;
+              labelY = startY + 14;
             } else {
-              // Target is to the right → down, then right, then up/down to target
-              const routeY = startY + GAP + 15;
+              // Target to the right → down, right, then to target
+              let routeY = startY + GAP + 15;
+              // Check if horizontal segment hits any shape — reroute below if so
+              if (hSegHits(routeY, startX, toPos.x, skip)) {
+                const maxLane = Math.max(stepPositions[conn.from]?.laneIndex ?? 0, stepPositions[conn.to]?.laneIndex ?? 0);
+                routeY = HEADER_HEIGHT + (maxLane + 1) * LANE_HEIGHT - 8;
+                routeY += getHSpread(routeY, startX, toPos.x);
+              }
               path = `M ${startX} ${startY} L ${startX} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y - toHalfH - GAP}`;
+              labelX = startX + 14;
+              labelY = startY + 14;
             }
-            labelX = startX + 14;
-            labelY = startY + 14;
 
           } else if (isFromDecision) {
             // Decision without Yes/No label → default exit right
@@ -793,7 +865,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             if (isSameLane && dx > 0) {
               path = `M ${startX} ${startY} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
             } else {
-              const midX = fromPos.x + CELL_WIDTH / 2;
+              const midX = findClearVert((fromPos.x + toPos.x) / 2, startY, toPos.y, skip);
               path = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${toPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
             }
             labelX = startX + 12;
@@ -810,7 +882,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const startX = fromPos.x - fromHalfW;
             const endX = toPos.x + toHalfW;
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
-            const routeY = HEADER_HEIGHT + fromLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8;
+            let routeY = HEADER_HEIGHT + fromLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8;
+            routeY += getHSpread(routeY, startX, endX);
             path = `M ${startX} ${fromPos.y} L ${startX - GAP} ${fromPos.y} L ${startX - GAP} ${routeY} L ${endX + GAP} ${routeY} L ${endX + GAP} ${toPos.y} L ${endX} ${toPos.y}`;
             labelX = (startX + endX) / 2;
             labelY = routeY + 12;
@@ -828,22 +901,21 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             labelY = (fromPos.y - fromHalfH + toPos.y + toHalfH) / 2;
 
           } else if (dx > 0) {
-            // ===== Different lane, going RIGHT → elbow connector =====
-            // Exit right side, go horizontal to midpoint between columns, then vertical, then horizontal to target
+            // ===== Different lane, going RIGHT → elbow with shape avoidance =====
             const startX = fromPos.x + fromHalfW;
-            const midX = (fromPos.x + toPos.x) / 2;
+            const midX = findClearVert((fromPos.x + toPos.x) / 2, fromPos.y, toPos.y, skip);
             path = `M ${startX} ${fromPos.y} L ${midX} ${fromPos.y} L ${midX} ${toPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
             labelX = midX + 8;
             labelY = Math.min(fromPos.y, toPos.y) - 8;
 
           } else {
             // ===== Different lane, going LEFT (loopback across lanes) =====
-            // Exit bottom, route below both shapes, then up to target
             const startY = fromPos.y + fromHalfH;
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
             const toLaneIdx = stepPositions[conn.to]?.laneIndex ?? 0;
             const maxLaneIdx = Math.max(fromLaneIdx, toLaneIdx);
-            const routeY = HEADER_HEIGHT + (maxLaneIdx + 1) * LANE_HEIGHT - 8;
+            let routeY = HEADER_HEIGHT + (maxLaneIdx + 1) * LANE_HEIGHT - 8;
+            routeY += getHSpread(routeY, fromPos.x, toPos.x);
             path = `M ${fromPos.x} ${startY} L ${fromPos.x} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
             labelX = (fromPos.x + toPos.x) / 2;
             labelY = routeY - 8;
