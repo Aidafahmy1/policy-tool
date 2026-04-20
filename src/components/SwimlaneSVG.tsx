@@ -1179,6 +1179,23 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   />
                 </foreignObject>
               )}
+              {/* Delete button — red × at top-right corner */}
+              {!isEditing && (
+                <g data-no-export="true" style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExtraShapes(prev => prev.filter(s => s.id !== shape.id));
+                    setExtraConnections(prev => prev.filter(c => c.from !== shape.id && c.to !== shape.id));
+                    setPosOffsets(prev => { const n = { ...prev }; delete n[shape.id]; return n; });
+                    setLabelOverrides(prev => { const n = { ...prev }; delete n[shape.id]; return n; });
+                    if (arrowStart === shape.id) setArrowStart(null);
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <circle cx={pos.x + hw - 2} cy={pos.y - hh + 2} r="9" fill="#ef4444" stroke="white" strokeWidth="1.5" />
+                  <text x={pos.x + hw - 2} y={pos.y - hh + 6} textAnchor="middle" fill="white" fontSize="12" fontWeight="bold" fontFamily="Arial">×</text>
+                </g>
+              )}
             </g>
           );
         })}
