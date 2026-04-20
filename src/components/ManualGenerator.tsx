@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { supabase, Message, Attachment } from '@/lib/supabase';
 import { Packer } from 'docx';
 import { generateManualDocument, ManualData } from '@/lib/generateDocx';
+import { generatePolicyDocument, PolicyData } from '@/lib/generatePolicyDocx';
 
 interface SwimlaneDataType {
   title: string;
@@ -306,7 +307,9 @@ export default function ManualGenerator({
   svgRef,
 }: ManualGeneratorProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingPolicy, setIsGeneratingPolicy] = useState(false);
   const [manualData, setManualData] = useState<ManualData | null>(null);
+  const [policyData, setPolicyData] = useState<PolicyData | null>(null);
   const [orgStructure, setOrgStructure] = useState<string>('');
   const [orgStructureImageBase64, setOrgStructureImageBase64] = useState<string | null>(null);
   const [showOrgInput, setShowOrgInput] = useState(false);
@@ -479,6 +482,104 @@ export default function ManualGenerator({
     }
   };
 
+  const handleGeneratePolicy = async () => {
+    const hasStructuredData = swimlaneData && swimlaneData.lanes && swimlaneData.lanes.length > 0;
+    const hasUploadedImage = uploadedImageBase64;
+    const hasConversationDiagram = conversationId && mermaidCode;
+
+    if (!hasStructuredData && !hasUploadedImage && !hasConversationDiagram) {
+      setError('Please create a process flowchart first');
+      return;
+    }
+
+    setIsGeneratingPolicy(true);
+    setError(null);
+
+    try {
+      let messages: Array<{ role: string; content: string }> = [];
+      let orgData = orgStructure;
+
+      if (conversationId) {
+        const { data: dbMessages } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .order('created_at', { ascending: true });
+
+        if (dbMessages && dbMessages.length > 0) {
+          messages = dbMessages.map((m) => ({ role: m.role, content: m.content }));
+        }
+
+        if (!orgData.trim()) {
+          const { data: chatAttachments } = await supabase
+            .from('attachments')
+            .select('file_name, file_content')
+            .eq('conversation_id', conversationId);
+
+          if (chatAttachments && chatAttachments.length > 0) {
+            const orgKeywords = ['org', 'structure', 'hierarchy', 'department', 'role', 'position', 'chart', 'raci', 'stakeholder', 'team'];
+            for (const att of chatAttachments) {
+              const nameLC = att.file_name.toLowerCase();
+              const contentLC = (att.file_content || '').toLowerCase().slice(0, 500);
+              const isOrgDoc = orgKeywords.some(kw => nameLC.includes(kw) || contentLC.includes(kw));
+              if (isOrgDoc && att.file_content) {
+                orgData += (orgData ? '\n\n' : '') + `--- ${att.file_name} ---\n${att.file_content}`;
+              }
+            }
+          }
+        }
+      }
+
+      const response = await fetch('/api/generate-policy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages,
+          swimlaneData,
+          processName: swimlaneData?.title || propProcessName,
+          orgStructure: orgData,
+          customInstructions: customInstructions.trim() || undefined,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        setError(data.error);
+        setIsGeneratingPolicy(false);
+        return;
+      }
+
+      setPolicyData(data.policy);
+    } catch (err) {
+      console.error('Error generating policy:', err);
+      setError('Failed to generate policy document');
+    } finally {
+      setIsGeneratingPolicy(false);
+    }
+  };
+
+  const handleDownloadPolicyDocx = async () => {
+    if (!policyData) return;
+
+    try {
+      const doc = generatePolicyDocument(policyData);
+      const blob = await Packer.toBlob(doc);
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${policyData.policyName.replace(/\s+/g, '_')}_Policy.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading policy document:', err);
+      setError('Failed to download policy document');
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -517,7 +618,7 @@ export default function ManualGenerator({
   return (
     <div className="p-4 bg-white rounded-lg border border-gray-200">
       <h3 className="text-lg font-semibold text-gray-800 mb-4">
-        Generate Process Manual
+        Generate Documents
       </h3>
 
       {/* Custom Instructions */}
@@ -585,21 +686,37 @@ export default function ManualGenerator({
         )}
       </div>
 
-      {/* Generate Button */}
-      <button
-        onClick={handleGenerateManual}
-        disabled={isGenerating}
-        className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-      >
-        {isGenerating ? (
-          <>
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            Generating Manual...
-          </>
-        ) : (
-          <>📄 Generate Manual</>
-        )}
-      </button>
+      {/* Generate Buttons */}
+      <div className="flex gap-3">
+        <button
+          onClick={handleGenerateManual}
+          disabled={isGenerating || isGeneratingPolicy}
+          className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {isGenerating ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>📄 Process Manual</>
+          )}
+        </button>
+        <button
+          onClick={handleGeneratePolicy}
+          disabled={isGenerating || isGeneratingPolicy}
+          className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {isGeneratingPolicy ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>📋 Policy Document</>
+          )}
+        </button>
+      </div>
 
       {error && (
         <div className="mt-2 p-2 bg-red-50 text-red-600 text-sm rounded">
@@ -631,9 +748,36 @@ export default function ManualGenerator({
 
           <button
             onClick={handleDownloadDocx}
+            className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2"
+          >
+            📥 Download Process Manual
+          </button>
+        </div>
+      )}
+
+      {/* Policy Preview */}
+      {policyData && (
+        <div className="mt-4 space-y-4">
+          <div className="p-4 bg-blue-50 rounded-lg max-h-64 overflow-y-auto">
+            <h4 className="font-semibold text-blue-700 mb-2">
+              {policyData.policyName}
+            </h4>
+            <p className="text-sm text-gray-600 mb-2">
+              <strong>Purpose:</strong> {policyData.purpose?.substring(0, 200)}{policyData.purpose?.length > 200 ? '...' : ''}
+            </p>
+            <p className="text-sm text-gray-600 mb-2">
+              <strong>Scope:</strong> {policyData.scope?.substring(0, 200)}{policyData.scope?.length > 200 ? '...' : ''}
+            </p>
+            <p className="text-sm text-gray-600">
+              <strong>Sections:</strong> {policyData.sections?.length || 0} policy sections
+            </p>
+          </div>
+
+          <button
+            onClick={handleDownloadPolicyDocx}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
           >
-            📥 Download Word Document
+            📥 Download Policy Document
           </button>
         </div>
       )}
