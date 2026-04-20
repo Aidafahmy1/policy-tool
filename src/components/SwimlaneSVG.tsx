@@ -639,6 +639,72 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       return overlap * 14;
     };
 
+    // Post-process ANY path: check every segment for shape collisions and detour around
+    const avoidShapesInPath = (pathStr: string, skipIds: Set<string>): string => {
+      const pts = parsePath(pathStr);
+      if (pts.length < 2) return pathStr;
+
+      const GAP = ARROW_GAP;
+      const result: { x: number; y: number }[] = [pts[0]];
+
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = result[result.length - 1]; // use last emitted point (may have shifted)
+        const b = pts[i + 1];
+        const isVert = Math.abs(a.x - b.x) < 1;
+        const isHoriz = Math.abs(a.y - b.y) < 1;
+
+        if (isVert) {
+          // Vertical segment — check if it passes through any shape
+          const lo = Math.min(a.y, b.y);
+          const hi = Math.max(a.y, b.y);
+          const blockers = allShapeBounds.filter(s =>
+            !skipIds.has(s.id) &&
+            a.x > s.cx - s.hw && a.x < s.cx + s.hw &&
+            hi > s.cy - s.hh && lo < s.cy + s.hh
+          );
+          if (blockers.length > 0) {
+            // Find combined bounding box of all blockers on this segment
+            let bLeft = Infinity, bRight = -Infinity;
+            for (const s of blockers) {
+              bLeft = Math.min(bLeft, s.cx - s.hw);
+              bRight = Math.max(bRight, s.cx + s.hw);
+            }
+            // Detour to the closer clear side
+            const dRight = bRight + GAP;
+            const dLeft = bLeft - GAP;
+            const detourX = Math.abs(dRight - a.x) <= Math.abs(dLeft - a.x) ? dRight : dLeft;
+            result.push({ x: detourX, y: a.y });
+            result.push({ x: detourX, y: b.y });
+          }
+        } else if (isHoriz) {
+          // Horizontal segment — check if it passes through any shape
+          const lo = Math.min(a.x, b.x);
+          const hi = Math.max(a.x, b.x);
+          const blockers = allShapeBounds.filter(s =>
+            !skipIds.has(s.id) &&
+            a.y > s.cy - s.hh && a.y < s.cy + s.hh &&
+            hi > s.cx - s.hw && lo < s.cx + s.hw
+          );
+          if (blockers.length > 0) {
+            let bTop = Infinity, bBottom = -Infinity;
+            for (const s of blockers) {
+              bTop = Math.min(bTop, s.cy - s.hh);
+              bBottom = Math.max(bBottom, s.cy + s.hh);
+            }
+            const dBelow = bBottom + GAP;
+            const dAbove = bTop - GAP;
+            const detourY = Math.abs(dAbove - a.y) <= Math.abs(dBelow - a.y) ? dAbove : dBelow;
+            result.push({ x: a.x, y: detourY });
+            result.push({ x: b.x, y: detourY });
+          }
+        }
+
+        result.push(b);
+      }
+
+      return buildPath(result);
+    };
+
     return (
       <div>
         {/* HTML Toolbar — always visible above the diagram */}
@@ -921,6 +987,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             labelY = routeY - 8;
           }
 
+          // Post-process: reroute any segment that passes through a shape
+          path = avoidShapesInPath(path, skip);
+
           // Use manual arrow overrides if available
           const overridePoints = arrowOverrides[connKey];
           const finalPath = overridePoints ? buildPath(overridePoints) : path;
@@ -1085,6 +1154,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const toPos = getStepPosition(conn.to);
           if (!fromPos || !toPos) return null;
           const overridePoints = arrowOverrides[connKey];
+          const extraSkip = new Set([conn.from, conn.to]);
           let path: string;
           if (overridePoints) {
             path = buildPath(overridePoints);
@@ -1096,9 +1166,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             } else if (Math.abs(dx) < 20 && dy !== 0) {
               path = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
             } else {
-              const midX = (fromPos.x + toPos.x) / 2;
+              const midX = findClearVert((fromPos.x + toPos.x) / 2, fromPos.y, toPos.y, extraSkip);
               path = `M ${fromPos.x} ${fromPos.y} L ${midX} ${fromPos.y} L ${midX} ${toPos.y} L ${toPos.x} ${toPos.y}`;
             }
+            path = avoidShapesInPath(path, extraSkip);
           }
           const pathPoints = overridePoints || parsePath(path);
           const isSelected = selectedArrow === connKey;
