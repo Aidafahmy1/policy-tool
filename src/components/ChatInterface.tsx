@@ -146,6 +146,21 @@ export default function ChatInterface({
 
       const data = await response.json();
 
+      if (!response.ok || data.error) {
+        const errText = data.error || `API error (${response.status})`;
+        console.error('Chat API error:', errText);
+        // Show error as assistant message so user sees it
+        setMessages(prev => [...prev, {
+          id: `error-${Date.now()}`,
+          conversation_id: currentConversationId!,
+          role: 'assistant',
+          content: `Sorry, something went wrong: ${errText}`,
+          created_at: new Date().toISOString(),
+        } as Message]);
+        setIsLoading(false);
+        return;
+      }
+
       // Save assistant message
       const assistantMessage: Partial<Message> = {
         conversation_id: currentConversationId!,
