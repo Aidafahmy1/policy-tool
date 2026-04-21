@@ -209,7 +209,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       const svgPt = screenToSVG(e.clientX, e.clientY);
       const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
       setDragInfo({ type: 'shape', stepId, startMouse: svgPt, startOffset: { ...offset } });
-    }, [screenToSVG, posOffsets, editingStepId, addMode, arrowStart]);
+    }, [screenToSVG, posOffsets, editingStepId, addMode, arrowStart, data, extraShapes]);
 
     // Pointer-down on an arrow waypoint starts waypoint drag
     const handleWaypointPointerDown = useCallback((e: React.PointerEvent, connKey: string, wpIdx: number, currentPoints: {x: number, y: number}[]) => {
