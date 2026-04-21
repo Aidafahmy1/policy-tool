@@ -84,6 +84,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       id: string; label: string;
       type: 'process' | 'decision' | 'document' | 'subprocess';
       x: number; y: number;
+      stepNumber?: number;
     }>>([]);
     const [extraConnections, setExtraConnections] = useState<Array<{
       from: string; to: string; label?: string;
@@ -413,6 +414,17 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       return { maxColumns: maxX + 1, stepPositions: positions, stepNumbers: numbers };
     }, [data]);
 
+    // Merge extra shape step numbers into the lookup
+    const allStepNumbers = useMemo(() => {
+      const merged = { ...stepNumbers };
+      for (const shape of extraShapes) {
+        if (shape.stepNumber !== undefined) {
+          merged[shape.id] = shape.stepNumber;
+        }
+      }
+      return merged;
+    }, [stepNumbers, extraShapes]);
+
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
     const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
 
@@ -479,7 +491,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const renderShape = (step: ProcessStep, cx: number, cy: number) => {
       const halfW = SHAPE_WIDTH / 2;
       const halfH = SHAPE_HEIGHT / 2;
-      const num = stepNumbers[step.id];
+      const num = allStepNumbers[step.id];
       const label = labelOverrides[step.id] || step.label;
 
       switch (step.type) {
@@ -888,10 +900,19 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           if (addMode && addMode !== 'arrow') {
             const svgPt = screenToSVG(e.clientX, e.clientY);
             const newId = `extra-${++extraIdCounter.current}`;
+            // Prompt for step number
+            let stepNumber: number | undefined;
+            if (addMode !== 'subprocess') {
+              const numStr = prompt('Step number for this shape (leave blank for none):');
+              if (numStr !== null && numStr.trim()) {
+                const parsed = parseInt(numStr.trim(), 10);
+                if (!isNaN(parsed)) stepNumber = parsed;
+              }
+            }
             setExtraShapes(prev => [...prev, {
               id: newId,
               label: addMode === 'decision' ? 'Decision?' : addMode === 'document' ? 'Document' : addMode === 'subprocess' ? 'Subprocess' : 'New Step',
-              type: addMode, x: svgPt.x, y: svgPt.y,
+              type: addMode, x: svgPt.x, y: svgPt.y, stepNumber,
             }]);
             setAddMode(null);
           }
