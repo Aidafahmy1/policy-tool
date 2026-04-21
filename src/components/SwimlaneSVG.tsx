@@ -35,6 +35,7 @@ export interface DiagramEditState {
   deletedShapes: string[];
   extraShapes: Array<{ id: string; label: string; type: string; x: number; y: number }>;
   extraConnections: Array<{ from: string; to: string; label?: string }>;
+  extraLanes: Array<{ id: string; name: string }>;
 }
 
 interface SwimlaneSVGProps {
@@ -92,6 +93,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const [extraConnections, setExtraConnections] = useState<Array<{
       from: string; to: string; label?: string;
     }>>([]);
+    const [extraLanes, setExtraLanes] = useState<Array<{ id: string; name: string }>>([]);
+    const [editingLaneId, setEditingLaneId] = useState<string | null>(null);
+    const [editLaneText, setEditLaneText] = useState('');
+    const laneEditInputRef = useRef<HTMLInputElement | null>(null);
     const [addMode, setAddMode] = useState<'process' | 'decision' | 'document' | 'subprocess' | 'arrow' | null>(null);
     const [arrowStart, setArrowStart] = useState<string | null>(null);
     const extraIdCounter = useRef(0);
@@ -121,6 +126,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setDeletedShapes(new Set());
       setExtraShapes([]);
       setExtraConnections([]);
+      setExtraLanes([]);
+      setEditingLaneId(null);
       setAddMode(null);
       setArrowStart(null);
     }, [data]);
@@ -136,7 +143,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setDeletedShapes(new Set(restoredEditState.deletedShapes || []));
       setExtraShapes((restoredEditState.extraShapes || []) as typeof extraShapes);
       setExtraConnections(restoredEditState.extraConnections || []);
+      setExtraLanes(restoredEditState.extraLanes || []);
       setEditingStepId(null);
+      setEditingLaneId(null);
       setSelectedArrow(null);
       setSelectedShape(null);
       setAddMode(null);
@@ -284,6 +293,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setDeletedShapes(new Set());
       setExtraShapes([]);
       setExtraConnections([]);
+      setExtraLanes([]);
+      setEditingLaneId(null);
       setAddMode(null);
       setArrowStart(null);
       onLayoutChange?.({});
@@ -440,7 +451,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     }, [stepNumbers, extraShapes, numberOverrides]);
 
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
-    const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
+    const totalLanes = data.lanes.length + extraLanes.length;
+    const svgHeight = HEADER_HEIGHT + (totalLanes * LANE_HEIGHT) + 60;
 
     // Get step center position (includes drag offset) — works for both grid steps and extra shapes
     const getStepPosition = (stepId: string) => {
@@ -846,6 +858,23 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               </button>
             );
           })}
+          <div style={{ width: '1px', height: '22px', background: 'rgba(255,255,255,0.25)', margin: '0 4px' }} />
+          <button onClick={() => {
+            const name = prompt('Swimlane name (e.g., Finance, Legal, IT):');
+            if (name && name.trim()) {
+              const laneId = `lane-extra-${++extraIdCounter.current}`;
+              setExtraLanes(prev => [...prev, { id: laneId, name: name.trim() }]);
+            }
+          }}
+            style={{
+              padding: '5px 14px', borderRadius: '6px', cursor: 'pointer',
+              border: '1.5px solid rgba(255,255,255,0.35)',
+              background: 'rgba(5,150,105,0.35)',
+              color: 'white', fontSize: '12px', fontWeight: 600,
+              transition: 'all 0.15s ease',
+            }}>
+            + Lane
+          </button>
           {addMode && (
             <button onClick={() => { setAddMode(null); setArrowStart(null); }}
               style={{
@@ -879,6 +908,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       deletedShapes: Array.from(deletedShapes),
                       extraShapes: extraShapes.map(s => ({ ...s })),
                       extraConnections: extraConnections.map(c => ({ ...c })),
+                      extraLanes: extraLanes.map(l => ({ ...l })),
                     };
                     onSaveVersion(editState);
                   }}
@@ -996,6 +1026,93 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   strokeDasharray="4,4"
                 />
               ))}
+            </g>
+          );
+        })}
+
+        {/* Extra lanes added by user */}
+        {extraLanes.map((lane, idx) => {
+          const laneIndex = data.lanes.length + idx;
+          const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
+          const isEditingLane = editingLaneId === lane.id;
+          return (
+            <g key={`extra-lane-${lane.id}`}>
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="#059669" stroke="#047857" strokeWidth="1" />
+              {isEditingLane ? (
+                <foreignObject x={2} y={laneY + LANE_HEIGHT / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
+                  <input
+                    ref={laneEditInputRef}
+                    value={editLaneText}
+                    onChange={(e) => setEditLaneText(e.target.value)}
+                    onBlur={() => {
+                      if (editLaneText.trim()) {
+                        setExtraLanes(prev => prev.map(l => l.id === lane.id ? { ...l, name: editLaneText.trim() } : l));
+                      }
+                      setEditingLaneId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (editLaneText.trim()) {
+                          setExtraLanes(prev => prev.map(l => l.id === lane.id ? { ...l, name: editLaneText.trim() } : l));
+                        }
+                        setEditingLaneId(null);
+                      }
+                      if (e.key === 'Escape') setEditingLaneId(null);
+                    }}
+                    style={{
+                      width: '100%', textAlign: 'center', border: '2px solid #3b82f6',
+                      borderRadius: '4px', background: 'white', color: '#1f2937',
+                      fontSize: '11px', fontFamily: 'Arial, sans-serif', fontWeight: 600,
+                      padding: '2px 4px', outline: 'none',
+                    }}
+                  />
+                </foreignObject>
+              ) : (
+                <text
+                  x={LANE_HEADER_WIDTH / 2}
+                  y={laneY + LANE_HEIGHT / 2}
+                  textAnchor="middle"
+                  fill="white"
+                  fontSize="11"
+                  fontFamily="Arial, sans-serif"
+                  fontWeight="600"
+                  transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + LANE_HEIGHT / 2})`}
+                  style={{ cursor: 'pointer' }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setEditingLaneId(lane.id);
+                    setEditLaneText(lane.name);
+                    setTimeout(() => laneEditInputRef.current?.focus(), 50);
+                  }}
+                >
+                  {lane.name}
+                </text>
+              )}
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
+              {Array.from({ length: maxColumns }).map((_, colIndex) => (
+                <line
+                  key={colIndex}
+                  x1={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
+                  y1={laneY}
+                  x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
+                  y2={laneY + LANE_HEIGHT}
+                  stroke="#f0f0f0"
+                  strokeWidth="0.5"
+                  strokeDasharray="4,4"
+                />
+              ))}
+              {/* Delete lane button */}
+              <g
+                data-no-export="true"
+                style={{ cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExtraLanes(prev => prev.filter(l => l.id !== lane.id));
+                }}
+              >
+                <circle cx={LANE_HEADER_WIDTH / 2} cy={laneY + 12} r={8} fill="#ef4444" stroke="white" strokeWidth="1.5" />
+                <text x={LANE_HEADER_WIDTH / 2} y={laneY + 16} textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="Arial">×</text>
+              </g>
             </g>
           );
         })}
@@ -1611,7 +1728,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         })()}
 
         {/* Reset Layout button (visible when any edits have been made) */}
-        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || Object.keys(numberOverrides).length > 0 || deletedConnections.size > 0 || deletedShapes.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
+        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || Object.keys(numberOverrides).length > 0 || deletedConnections.size > 0 || deletedShapes.size > 0 || extraShapes.length > 0 || extraConnections.length > 0 || extraLanes.length > 0) && (
           <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
             <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
             <text
