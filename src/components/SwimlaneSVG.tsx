@@ -31,6 +31,7 @@ export interface DiagramEditState {
   arrowOverrides: Record<string, { x: number; y: number }[]>;
   labelOverrides: Record<string, string>;
   deletedConnections: string[];
+  deletedShapes: string[];
   extraShapes: Array<{ id: string; label: string; type: string; x: number; y: number }>;
   extraConnections: Array<{ from: string; to: string; label?: string }>;
 }
@@ -76,6 +77,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const editInputRef = useRef<HTMLTextAreaElement | null>(null);
     const [selectedArrow, setSelectedArrow] = useState<string | null>(null);
     const [deletedConnections, setDeletedConnections] = useState<Set<string>>(new Set());
+    const [deletedShapes, setDeletedShapes] = useState<Set<string>>(new Set());
+    const [selectedShape, setSelectedShape] = useState<string | null>(null);
     // Extra shapes and connections added by user
     const [extraShapes, setExtraShapes] = useState<Array<{
       id: string; label: string;
@@ -108,7 +111,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setLabelOverrides({});
       setEditingStepId(null);
       setSelectedArrow(null);
+      setSelectedShape(null);
       setDeletedConnections(new Set());
+      setDeletedShapes(new Set());
       setExtraShapes([]);
       setExtraConnections([]);
       setAddMode(null);
@@ -122,10 +127,12 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setArrowOverrides(restoredEditState.arrowOverrides || {});
       setLabelOverrides(restoredEditState.labelOverrides || {});
       setDeletedConnections(new Set(restoredEditState.deletedConnections || []));
+      setDeletedShapes(new Set(restoredEditState.deletedShapes || []));
       setExtraShapes((restoredEditState.extraShapes || []) as typeof extraShapes);
       setExtraConnections(restoredEditState.extraConnections || []);
       setEditingStepId(null);
       setSelectedArrow(null);
+      setSelectedShape(null);
       setAddMode(null);
       setArrowStart(null);
     }, [restoredEditState]);
@@ -265,7 +272,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setLabelOverrides({});
       setEditingStepId(null);
       setSelectedArrow(null);
+      setSelectedShape(null);
       setDeletedConnections(new Set());
+      setDeletedShapes(new Set());
       setExtraShapes([]);
       setExtraConnections([]);
       setAddMode(null);
@@ -273,7 +282,20 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       onLayoutChange?.({});
     }, [onLayoutChange]);
 
-    // Keyboard listener for arrow deletion (Delete/Backspace) and deselection (Escape)
+    // Helper to delete a shape and its connections
+    const deleteShape = useCallback((shapeId: string) => {
+      setDeletedShapes(prev => { const n = new Set(prev); n.add(shapeId); return n; });
+      // Also delete all connections involving this shape
+      data.connections.forEach(conn => {
+        if (conn.from === shapeId || conn.to === shapeId) {
+          setDeletedConnections(prev => { const n = new Set(prev); n.add(`${conn.from}->${conn.to}`); return n; });
+        }
+      });
+      setExtraConnections(prev => prev.filter(c => c.from !== shapeId && c.to !== shapeId));
+      setSelectedShape(null);
+    }, [data.connections]);
+
+    // Keyboard listener for arrow/shape deletion (Delete/Backspace) and deselection (Escape)
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
         if (selectedArrow && (e.key === 'Delete' || e.key === 'Backspace') && !editingStepId) {
@@ -290,15 +312,20 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           });
           setSelectedArrow(null);
         }
+        if (selectedShape && (e.key === 'Delete' || e.key === 'Backspace') && !editingStepId) {
+          e.preventDefault();
+          deleteShape(selectedShape);
+        }
         if (e.key === 'Escape') {
           setSelectedArrow(null);
+          setSelectedShape(null);
           setAddMode(null);
           setArrowStart(null);
         }
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedArrow, editingStepId]);
+    }, [selectedArrow, selectedShape, editingStepId, deleteShape]);
 
     // Click on arrow path to select/deselect it
     const handleArrowClick = useCallback((e: React.PointerEvent, connKey: string) => {
@@ -805,6 +832,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       arrowOverrides: Object.fromEntries(Object.entries(arrowOverrides).map(([k, v]) => [k, v.map(p => ({ ...p }))])),
                       labelOverrides: { ...labelOverrides },
                       deletedConnections: Array.from(deletedConnections),
+                      deletedShapes: Array.from(deletedShapes),
                       extraShapes: extraShapes.map(s => ({ ...s })),
                       extraConnections: extraConnections.map(c => ({ ...c })),
                     };
@@ -856,6 +884,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         style={{ backgroundColor: 'white', touchAction: 'none', userSelect: 'none', cursor: addMode ? 'crosshair' : dragInfo ? 'grabbing' : 'default' }}
         onClick={(e) => {
           setSelectedArrow(null);
+          setSelectedShape(null);
           if (addMode && addMode !== 'arrow') {
             const svgPt = screenToSVG(e.clientX, e.clientY);
             const newId = `extra-${++extraIdCounter.current}`;
@@ -936,6 +965,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {data.connections.map((conn, idx) => {
           const connKey = `${conn.from}->${conn.to}`;
           if (deletedConnections.has(connKey)) return null;
+          if (deletedShapes.has(conn.from) || deletedShapes.has(conn.to)) return null;
 
           const fromPos = getStepPosition(conn.from);
           const toPos = getStepPosition(conn.to);
@@ -1356,16 +1386,24 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             {lane.steps.map((step, stepIdx) => {
               const pos = getStepPosition(step.id);
               if (!pos) return null;
+              if (deletedShapes.has(step.id)) return null;
               const isDecision = step.type === 'decision';
               const hw = isDecision ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
               const hh = isDecision ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
               const currentLabel = labelOverrides[step.id] || step.label;
               const isEditing = editingStepId === step.id;
+              const isShapeSelected = selectedShape === step.id;
               return (
                 <g
                   key={`drag-${laneIdx}-${stepIdx}`}
                   style={{ cursor: isEditing ? 'text' : (dragInfo?.type === 'shape' && dragInfo.stepId === step.id) ? 'grabbing' : 'grab' }}
-                  onPointerDown={(e) => handleShapePointerDown(e, step.id)}
+                  onPointerDown={(e) => {
+                    handleShapePointerDown(e, step.id);
+                    if (!editingStepId && addMode !== 'arrow') {
+                      setSelectedShape(step.id);
+                      setSelectedArrow(null);
+                    }
+                  }}
                   onDoubleClick={(e) => handleShapeDoubleClick(e, step.id, currentLabel)}
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -1378,7 +1416,37 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                     fill="transparent"
                     stroke="none"
                   />
+                  {/* Selection highlight */}
+                  {isShapeSelected && (
+                    <rect
+                      data-no-export="true"
+                      x={pos.x - hw - 6}
+                      y={pos.y - hh - 6}
+                      width={(hw + 6) * 2}
+                      height={(hh + 6) * 2}
+                      fill="none"
+                      stroke="#3b82f6"
+                      strokeWidth="2.5"
+                      strokeDasharray="6,3"
+                      rx="6"
+                    />
+                  )}
                   {renderShape(step, pos.x, pos.y)}
+                  {/* Delete button when shape is selected */}
+                  {isShapeSelected && !isEditing && (
+                    <g
+                      data-no-export="true"
+                      style={{ cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteShape(step.id);
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                    >
+                      <circle cx={pos.x + hw - 2} cy={pos.y - hh + 2} r={9} fill="#ef4444" stroke="white" strokeWidth="1.5" />
+                      <text x={pos.x + hw - 2} y={pos.y - hh + 6} textAnchor="middle" fill="white" fontSize="12" fontWeight="bold" fontFamily="Arial">×</text>
+                    </g>
+                  )}
                   {/* Inline text editing overlay */}
                   {isEditing && (
                     <foreignObject
@@ -1490,7 +1558,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         })()}
 
         {/* Reset Layout button (visible when any edits have been made) */}
-        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
+        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0 || deletedShapes.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
           <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
             <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
             <text
