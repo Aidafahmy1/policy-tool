@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
     }
 
     const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-5',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 16000,
       system: SYSTEM_PROMPT
         + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nWhen the user asks to modify, update, add, remove, or change steps/connections/labels in the flowchart, you MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes while preserving everything else. Keep the same step IDs for unchanged steps so the layout stays consistent. Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')

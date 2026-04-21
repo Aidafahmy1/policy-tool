@@ -188,7 +188,20 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         if (!arrowStart) {
           setArrowStart(stepId);
         } else if (arrowStart !== stepId) {
-          setExtraConnections(prev => [...prev, { from: arrowStart, to: stepId }]);
+          // Check if the source is a decision shape — prompt for Yes/No label
+          const allSteps = [...data.lanes.flatMap(l => l.steps), ...extraShapes];
+          const sourceStep = allSteps.find(s => s.id === arrowStart);
+          let label: string | undefined;
+          if (sourceStep?.type === 'decision') {
+            const choice = prompt('Decision arrow label:\nType "Yes" or "No" (or leave blank for unlabeled)');
+            if (choice !== null) {
+              const trimmed = choice.trim();
+              if (/^y(es)?$/i.test(trimmed)) label = 'Yes';
+              else if (/^n(o)?$/i.test(trimmed)) label = 'No';
+              else if (trimmed) label = trimmed;
+            }
+          }
+          setExtraConnections(prev => [...prev, { from: arrowStart, to: stepId, label }]);
           setArrowStart(null);
         }
         return;
@@ -1255,11 +1268,23 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const pathPoints = overridePoints || parsePath(path);
           const isSelected = selectedArrow === connKey;
           const midPt = pathPoints[Math.floor(pathPoints.length / 2)] || pathPoints[0];
+          // Yes/No coloring for extra connections
+          const isYes = conn.label?.toLowerCase() === 'yes';
+          const isNo = conn.label?.toLowerCase() === 'no';
+          const strokeColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
+          const markerEnd = isYes ? 'url(#arrowhead-green)' : isNo ? 'url(#arrowhead-red)' : 'url(#arrowhead)';
+          const labelBgColor = isYes ? '#dcfce7' : isNo ? '#fee2e2' : 'white';
+          const labelBorderColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#d1d5db';
+          const labelTextColor = isYes ? '#15803d' : isNo ? '#dc2626' : '#374151';
+          // Label position near start of path
+          const labelPt = pathPoints.length > 1 ? pathPoints[1] : pathPoints[0];
+          const labelX = labelPt.x + 14;
+          const labelY = labelPt.y - 8;
           return (
             <g key={`ec-${idx}`}>
               <path d={path} fill="none" stroke="white" strokeWidth="5" />
               {isSelected && <path d={path} fill="none" stroke="#3b82f6" strokeWidth="5" strokeOpacity="0.3" />}
-              <path d={path} fill="none" stroke="#6b7280" strokeWidth={isSelected ? "2.5" : "1.5"} markerEnd="url(#arrowhead)" />
+              <path d={path} fill="none" stroke={strokeColor} strokeWidth={isSelected ? "2.5" : "1.5"} markerEnd={markerEnd} />
               <path d={path} fill="none" stroke="transparent" strokeWidth="14" style={{ cursor: 'pointer' }}
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => {
@@ -1279,6 +1304,32 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   }
                 }}
               />
+              {/* Label badge for Yes/No or custom labels */}
+              {conn.label && (
+                <>
+                  <rect
+                    x={labelX - 16}
+                    y={labelY - 10}
+                    width="32"
+                    height="16"
+                    fill={labelBgColor}
+                    stroke={labelBorderColor}
+                    strokeWidth={1}
+                    rx="3"
+                  />
+                  <text
+                    x={labelX}
+                    y={labelY + 2}
+                    textAnchor="middle"
+                    fill={labelTextColor}
+                    fontSize="10"
+                    fontFamily="Arial, sans-serif"
+                    fontWeight="bold"
+                  >
+                    {conn.label}
+                  </text>
+                </>
+              )}
               {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
                 <circle key={`ewp-${idx}-${i}`} data-no-export="true" cx={pt.x} cy={pt.y}
                   r={isSelected ? 6 : 4} fill={isSelected ? '#3b82f6' : 'white'} stroke={isSelected ? 'white' : '#3b82f6'} strokeWidth={1.5}
