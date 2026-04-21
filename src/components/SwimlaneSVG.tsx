@@ -30,6 +30,7 @@ export interface DiagramEditState {
   posOffsets: Record<string, { dx: number; dy: number }>;
   arrowOverrides: Record<string, { x: number; y: number }[]>;
   labelOverrides: Record<string, string>;
+  numberOverrides: Record<string, number | null>;
   deletedConnections: string[];
   deletedShapes: string[];
   extraShapes: Array<{ id: string; label: string; type: string; x: number; y: number }>;
@@ -72,6 +73,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const [arrowOverrides, setArrowOverrides] = useState<Record<string, {x: number, y: number}[]>>({});
     // Label text overrides from inline editing
     const [labelOverrides, setLabelOverrides] = useState<Record<string, string>>({});
+    // Step number overrides from user edits
+    const [numberOverrides, setNumberOverrides] = useState<Record<string, number | null>>({});
     const [editingStepId, setEditingStepId] = useState<string | null>(null);
     const [editText, setEditText] = useState('');
     const editInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -110,6 +113,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setPosOffsets({});
       setArrowOverrides({});
       setLabelOverrides({});
+      setNumberOverrides({});
       setEditingStepId(null);
       setSelectedArrow(null);
       setSelectedShape(null);
@@ -127,6 +131,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setPosOffsets(restoredEditState.posOffsets || {});
       setArrowOverrides(restoredEditState.arrowOverrides || {});
       setLabelOverrides(restoredEditState.labelOverrides || {});
+      setNumberOverrides(restoredEditState.numberOverrides || {});
       setDeletedConnections(new Set(restoredEditState.deletedConnections || []));
       setDeletedShapes(new Set(restoredEditState.deletedShapes || []));
       setExtraShapes((restoredEditState.extraShapes || []) as typeof extraShapes);
@@ -271,6 +276,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setPosOffsets({});
       setArrowOverrides({});
       setLabelOverrides({});
+      setNumberOverrides({});
       setEditingStepId(null);
       setSelectedArrow(null);
       setSelectedShape(null);
@@ -414,7 +420,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       return { maxColumns: maxX + 1, stepPositions: positions, stepNumbers: numbers };
     }, [data]);
 
-    // Merge extra shape step numbers into the lookup
+    // Merge extra shape step numbers and user overrides into the lookup
     const allStepNumbers = useMemo(() => {
       const merged = { ...stepNumbers };
       for (const shape of extraShapes) {
@@ -422,8 +428,16 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           merged[shape.id] = shape.stepNumber;
         }
       }
+      // Apply user overrides (null = removed number)
+      for (const [id, val] of Object.entries(numberOverrides)) {
+        if (val === null) {
+          delete merged[id];
+        } else {
+          merged[id] = val;
+        }
+      }
       return merged;
-    }, [stepNumbers, extraShapes]);
+    }, [stepNumbers, extraShapes, numberOverrides]);
 
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
     const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
@@ -473,17 +487,34 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       return Math.max(baseSize - 3, 5.5);
     };
 
-    // Render step number badge (inside top-left of shape)
-    const renderStepBadge = (cx: number, cy: number, num: number, halfW: number, halfH: number) => {
+    // Render step number badge (inside top-left of shape) — click to edit
+    const renderStepBadge = (cx: number, cy: number, num: number, halfW: number, halfH: number, stepId: string) => {
       const badgeX = cx - halfW + 10;
       const badgeY = cy - halfH + 10;
       return (
-        <>
+        <g
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const current = String(num);
+            const input = prompt('Edit step number (leave blank to remove):', current);
+            if (input === null) return; // cancelled
+            if (input.trim() === '') {
+              setNumberOverrides(prev => ({ ...prev, [stepId]: null }));
+            } else {
+              const parsed = parseInt(input.trim(), 10);
+              if (!isNaN(parsed)) {
+                setNumberOverrides(prev => ({ ...prev, [stepId]: parsed }));
+              }
+            }
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           <circle cx={badgeX} cy={badgeY} r={8} fill="#047857" stroke="white" strokeWidth="1.5" />
           <text x={badgeX} y={badgeY + 3} textAnchor="middle" fill="white" fontSize="7" fontFamily="Arial, sans-serif" fontWeight="700">
             {num}
           </text>
-        </>
+        </g>
       );
     };
 
@@ -542,7 +573,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {line}
                 </text>
               ))}
-              {num && renderStepBadge(cx, cy, num, halfD, halfD)}
+              {num && renderStepBadge(cx, cy, num, halfD, halfD, step.id)}
             </g>
           );
         }
@@ -577,7 +608,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {line}
                 </text>
               ))}
-              {num && renderStepBadge(cx, cy, num, halfW, halfH)}
+              {num && renderStepBadge(cx, cy, num, halfW, halfH, step.id)}
             </g>
           );
         }
@@ -614,7 +645,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {line}
                 </text>
               ))}
-              {num && renderStepBadge(cx, cy, num, halfW, halfH)}
+              {num && renderStepBadge(cx, cy, num, halfW, halfH, step.id)}
             </g>
           );
         }
@@ -650,7 +681,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {line}
                 </text>
               ))}
-              {num && renderStepBadge(cx, cy, num, halfW, halfH)}
+              {num && renderStepBadge(cx, cy, num, halfW, halfH, step.id)}
             </g>
           );
         }
@@ -843,6 +874,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       posOffsets: { ...posOffsets },
                       arrowOverrides: Object.fromEntries(Object.entries(arrowOverrides).map(([k, v]) => [k, v.map(p => ({ ...p }))])),
                       labelOverrides: { ...labelOverrides },
+                      numberOverrides: { ...numberOverrides },
                       deletedConnections: Array.from(deletedConnections),
                       deletedShapes: Array.from(deletedShapes),
                       extraShapes: extraShapes.map(s => ({ ...s })),
@@ -1579,7 +1611,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         })()}
 
         {/* Reset Layout button (visible when any edits have been made) */}
-        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || deletedConnections.size > 0 || deletedShapes.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
+        {(Object.keys(posOffsets).length > 0 || Object.keys(arrowOverrides).length > 0 || Object.keys(labelOverrides).length > 0 || Object.keys(numberOverrides).length > 0 || deletedConnections.size > 0 || deletedShapes.size > 0 || extraShapes.length > 0 || extraConnections.length > 0) && (
           <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={handleReset}>
             <rect x={svgWidth - 125} y={HEADER_HEIGHT + 8} width="115" height="28" rx="6" fill="#ef4444" />
             <text
