@@ -55,6 +55,8 @@ const SHAPE_WIDTH = 160;
 const SHAPE_HEIGHT = 64;
 const HEADER_HEIGHT = 40;
 const DECISION_SIZE = 64;
+const DOC_WIDTH = 110;   // smaller width for document shapes
+const DOC_HEIGHT = 48;   // smaller height for document shapes
 const ARROW_GAP = 14; // min gap between arrow and shape edge
 
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
@@ -404,7 +406,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       while (queue.length > 0) {
         const currentId = queue.shift()!;
         const currentStep = allSteps.find(s => s.id === currentId);
-        if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+        if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end' && currentStep.type !== 'document') {
           numbers[currentId] = stepNum++;
         }
         // Get neighbors sorted by: x position first, then lane index (for consistent ordering at branches)
@@ -423,7 +425,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
       // Fallback: number any remaining steps not reachable from start (shouldn't happen normally)
       for (const step of allSteps) {
-        if (step.type !== 'start' && step.type !== 'end' && !numbers[step.id]) {
+        if (step.type !== 'start' && step.type !== 'end' && step.type !== 'document' && !numbers[step.id]) {
           numbers[step.id] = stepNum++;
         }
       }
@@ -452,16 +454,77 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
     const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
     const totalLanes = data.lanes.length + extraLanes.length;
-    const svgHeight = HEADER_HEIGHT + (totalLanes * LANE_HEIGHT) + 60;
+
+    // Compute vertical slot index for shapes sharing same (lane, x) cell
+    const slotInfo = useMemo(() => {
+      // Group shapes by (laneIndex, x) key
+      const cellGroups: Record<string, string[]> = {};
+      data.lanes.forEach((lane, laneIndex) => {
+        lane.steps.forEach(step => {
+          const key = `${laneIndex}:${step.x}`;
+          if (!cellGroups[key]) cellGroups[key] = [];
+          cellGroups[key].push(step.id);
+        });
+      });
+      // Assign slot index and total count for each shape
+      const info: Record<string, { slotIndex: number; slotCount: number }> = {};
+      for (const ids of Object.values(cellGroups)) {
+        ids.forEach((id, idx) => {
+          info[id] = { slotIndex: idx, slotCount: ids.length };
+        });
+      }
+      return info;
+    }, [data]);
+
+    // Compute dynamic lane heights based on max shapes stacked at the same x column
+    const laneHeights = useMemo(() => {
+      const heights: number[] = [];
+      data.lanes.forEach((lane, laneIndex) => {
+        // Count shapes per x column in this lane
+        const colCounts: Record<number, number> = {};
+        lane.steps.forEach(step => {
+          colCounts[step.x] = (colCounts[step.x] || 0) + 1;
+        });
+        const maxStacked = Math.max(1, ...Object.values(colCounts));
+        // Base height for 1 shape, add SHAPE_HEIGHT + gap for each additional stacked shape
+        heights[laneIndex] = Math.max(LANE_HEIGHT, LANE_HEIGHT + (maxStacked - 1) * (SHAPE_HEIGHT + 30));
+      });
+      // Extra lanes get default height
+      extraLanes.forEach((_, idx) => {
+        heights[data.lanes.length + idx] = LANE_HEIGHT;
+      });
+      return heights;
+    }, [data, extraLanes]);
+
+    // Cumulative Y offsets for each lane
+    const laneYOffsets = useMemo(() => {
+      const offsets: number[] = [HEADER_HEIGHT];
+      for (let i = 0; i < totalLanes; i++) {
+        offsets[i + 1] = offsets[i] + (laneHeights[i] || LANE_HEIGHT);
+      }
+      return offsets;
+    }, [laneHeights, totalLanes]);
+
+    const svgHeight = laneYOffsets[totalLanes] + 60;
 
     // Get step center position (includes drag offset) — works for both grid steps and extra shapes
     const getStepPosition = (stepId: string) => {
       const pos = stepPositions[stepId];
       if (pos) {
         const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
+        const laneH = laneHeights[pos.laneIndex] || LANE_HEIGHT;
+        const laneTop = laneYOffsets[pos.laneIndex];
+        const slot = slotInfo[stepId];
+        let y: number;
+        if (slot && slot.slotCount > 1) {
+          // Spread shapes evenly within the lane: divide lane into slotCount equal sections
+          const sectionH = laneH / slot.slotCount;
+          y = laneTop + sectionH * slot.slotIndex + sectionH / 2;
+        } else {
+          y = laneTop + laneH / 2;
+        }
         const x = LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2) + offset.dx;
-        const y = HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2) + offset.dy;
-        return { x, y };
+        return { x, y: y + offset.dy };
       }
       const extra = extraShapes.find(s => s.id === stepId);
       if (extra) {
@@ -591,16 +654,18 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
         
         case 'document': {
-          const docLines = wrapText(label, 20);
-          const docFontSize = getFontSize(label, SHAPE_WIDTH - 10, 8);
+          const dHW = DOC_WIDTH / 2;
+          const dHH = DOC_HEIGHT / 2;
+          const docLines = wrapText(label, 16);
+          const docFontSize = getFontSize(label, DOC_WIDTH - 10, 7);
           return (
             <g>
               <path
-                d={`M${cx - halfW},${cy - halfH} 
-                   L${cx + halfW},${cy - halfH} 
-                   L${cx + halfW},${cy + halfH - 6} 
-                   Q${cx + halfW * 0.5},${cy + halfH + 3} ${cx},${cy + halfH - 6}
-                   Q${cx - halfW * 0.5},${cy + halfH - 15} ${cx - halfW},${cy + halfH - 6}
+                d={`M${cx - dHW},${cy - dHH} 
+                   L${cx + dHW},${cy - dHH} 
+                   L${cx + dHW},${cy + dHH - 5} 
+                   Q${cx + dHW * 0.5},${cy + dHH + 2} ${cx},${cy + dHH - 5}
+                   Q${cx - dHW * 0.5},${cy + dHH - 12} ${cx - dHW},${cy + dHH - 5}
                    Z`}
                 fill="#059669"
                 stroke="#047857"
@@ -620,7 +685,6 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {line}
                 </text>
               ))}
-              {num && renderStepBadge(cx, cy, num, halfW, halfH, step.id)}
             </g>
           );
         }
@@ -703,23 +767,28 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     // ── Arrow routing helpers: shape avoidance + overlap spreading ──────
     // Collect bounding boxes of all shapes for collision detection
     const allShapeBounds: Array<{ id: string; cx: number; cy: number; hw: number; hh: number }> = [];
+    const getShapeDims = (type: string) => {
+      if (type === 'decision') return { w: DECISION_SIZE, h: DECISION_SIZE };
+      if (type === 'document') return { w: DOC_WIDTH, h: DOC_HEIGHT };
+      return { w: SHAPE_WIDTH, h: SHAPE_HEIGHT };
+    };
     for (const lane of data.lanes) {
       for (const step of lane.steps) {
         const pos = getStepPosition(step.id);
         if (!pos) continue;
-        const isD = step.type === 'decision';
+        const dims = getShapeDims(step.type);
         allShapeBounds.push({ id: step.id, cx: pos.x, cy: pos.y,
-          hw: (isD ? DECISION_SIZE : SHAPE_WIDTH) / 2 + 6,
-          hh: (isD ? DECISION_SIZE : SHAPE_HEIGHT) / 2 + 6 });
+          hw: dims.w / 2 + ARROW_GAP,
+          hh: dims.h / 2 + ARROW_GAP });
       }
     }
     for (const shape of extraShapes) {
       const pos = getStepPosition(shape.id);
       if (!pos) continue;
-      const isD = shape.type === 'decision';
+      const dims = getShapeDims(shape.type);
       allShapeBounds.push({ id: shape.id, cx: pos.x, cy: pos.y,
-        hw: (isD ? DECISION_SIZE : SHAPE_WIDTH) / 2 + 6,
-        hh: (isD ? DECISION_SIZE : SHAPE_HEIGHT) / 2 + 6 });
+        hw: dims.w / 2 + ARROW_GAP,
+        hh: dims.h / 2 + ARROW_GAP });
     }
 
     // Does a vertical segment at x (y1→y2) hit any shape (excluding skip set)?
@@ -740,7 +809,11 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       if (!vSegHits(preferred, y1, y2, skip)) return preferred;
       const candidates: number[] = [];
       for (let col = 0; col <= maxColumns + 1; col++) {
+        // Column left edges
         candidates.push(LANE_HEADER_WIDTH + col * CELL_WIDTH);
+        // Also try right edges of cells (between shapes)
+        candidates.push(LANE_HEADER_WIDTH + col * CELL_WIDTH + CELL_WIDTH / 2 + SHAPE_WIDTH / 2 + ARROW_GAP + 4);
+        candidates.push(LANE_HEADER_WIDTH + col * CELL_WIDTH + CELL_WIDTH / 2 - SHAPE_WIDTH / 2 - ARROW_GAP - 4);
       }
       candidates.sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred));
       for (const cx of candidates) {
@@ -762,70 +835,75 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       return overlap * 14;
     };
 
-    // Post-process ANY path: check every segment for shape collisions and detour around
+    // Post-process ANY path: iteratively check every segment for shape collisions and detour around
     const avoidShapesInPath = (pathStr: string, skipIds: Set<string>): string => {
-      const pts = parsePath(pathStr);
+      const GAP = ARROW_GAP + 4; // extra clearance for detours
+      let pts = parsePath(pathStr);
       if (pts.length < 2) return pathStr;
 
-      const GAP = ARROW_GAP;
-      const result: { x: number; y: number }[] = [pts[0]];
+      // Run multiple passes (max 4) until no more collisions
+      for (let pass = 0; pass < 4; pass++) {
+        let hadCollision = false;
+        const result: { x: number; y: number }[] = [pts[0]];
 
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = result[result.length - 1]; // use last emitted point (may have shifted)
-        const b = pts[i + 1];
-        const isVert = Math.abs(a.x - b.x) < 1;
-        const isHoriz = Math.abs(a.y - b.y) < 1;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = result[result.length - 1];
+          const b = pts[i + 1];
+          const isVert = Math.abs(a.x - b.x) < 1;
+          const isHoriz = Math.abs(a.y - b.y) < 1;
 
-        if (isVert) {
-          // Vertical segment — check if it passes through any shape
-          const lo = Math.min(a.y, b.y);
-          const hi = Math.max(a.y, b.y);
-          const blockers = allShapeBounds.filter(s =>
-            !skipIds.has(s.id) &&
-            a.x > s.cx - s.hw && a.x < s.cx + s.hw &&
-            hi > s.cy - s.hh && lo < s.cy + s.hh
-          );
-          if (blockers.length > 0) {
-            // Find combined bounding box of all blockers on this segment
-            let bLeft = Infinity, bRight = -Infinity;
-            for (const s of blockers) {
-              bLeft = Math.min(bLeft, s.cx - s.hw);
-              bRight = Math.max(bRight, s.cx + s.hw);
+          if (isVert) {
+            const lo = Math.min(a.y, b.y);
+            const hi = Math.max(a.y, b.y);
+            const blockers = allShapeBounds.filter(s =>
+              !skipIds.has(s.id) &&
+              a.x > s.cx - s.hw && a.x < s.cx + s.hw &&
+              hi > s.cy - s.hh && lo < s.cy + s.hh
+            );
+            if (blockers.length > 0) {
+              hadCollision = true;
+              let bLeft = Infinity, bRight = -Infinity;
+              for (const s of blockers) {
+                bLeft = Math.min(bLeft, s.cx - s.hw);
+                bRight = Math.max(bRight, s.cx + s.hw);
+              }
+              const dRight = bRight + GAP;
+              const dLeft = bLeft - GAP;
+              const detourX = Math.abs(dRight - a.x) <= Math.abs(dLeft - a.x) ? dRight : dLeft;
+              result.push({ x: detourX, y: a.y });
+              result.push({ x: detourX, y: b.y });
             }
-            // Detour to the closer clear side
-            const dRight = bRight + GAP;
-            const dLeft = bLeft - GAP;
-            const detourX = Math.abs(dRight - a.x) <= Math.abs(dLeft - a.x) ? dRight : dLeft;
-            result.push({ x: detourX, y: a.y });
-            result.push({ x: detourX, y: b.y });
-          }
-        } else if (isHoriz) {
-          // Horizontal segment — check if it passes through any shape
-          const lo = Math.min(a.x, b.x);
-          const hi = Math.max(a.x, b.x);
-          const blockers = allShapeBounds.filter(s =>
-            !skipIds.has(s.id) &&
-            a.y > s.cy - s.hh && a.y < s.cy + s.hh &&
-            hi > s.cx - s.hw && lo < s.cx + s.hw
-          );
-          if (blockers.length > 0) {
-            let bTop = Infinity, bBottom = -Infinity;
-            for (const s of blockers) {
-              bTop = Math.min(bTop, s.cy - s.hh);
-              bBottom = Math.max(bBottom, s.cy + s.hh);
+          } else if (isHoriz) {
+            const lo = Math.min(a.x, b.x);
+            const hi = Math.max(a.x, b.x);
+            const blockers = allShapeBounds.filter(s =>
+              !skipIds.has(s.id) &&
+              a.y > s.cy - s.hh && a.y < s.cy + s.hh &&
+              hi > s.cx - s.hw && lo < s.cx + s.hw
+            );
+            if (blockers.length > 0) {
+              hadCollision = true;
+              let bTop = Infinity, bBottom = -Infinity;
+              for (const s of blockers) {
+                bTop = Math.min(bTop, s.cy - s.hh);
+                bBottom = Math.max(bBottom, s.cy + s.hh);
+              }
+              const dBelow = bBottom + GAP;
+              const dAbove = bTop - GAP;
+              const detourY = Math.abs(dAbove - a.y) <= Math.abs(dBelow - a.y) ? dAbove : dBelow;
+              result.push({ x: a.x, y: detourY });
+              result.push({ x: b.x, y: detourY });
             }
-            const dBelow = bBottom + GAP;
-            const dAbove = bTop - GAP;
-            const detourY = Math.abs(dAbove - a.y) <= Math.abs(dBelow - a.y) ? dAbove : dBelow;
-            result.push({ x: a.x, y: detourY });
-            result.push({ x: b.x, y: detourY });
           }
+
+          result.push(b);
         }
 
-        result.push(b);
+        pts = result;
+        if (!hadCollision) break;
       }
 
-      return buildPath(result);
+      return buildPath(pts);
     };
 
     return (
@@ -997,30 +1075,31 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
         {/* Layer 1: Lane backgrounds and headers */}
         {data.lanes.map((lane, laneIndex) => {
-          const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
+          const laneY = laneYOffsets[laneIndex];
+          const laneH = laneHeights[laneIndex] || LANE_HEIGHT;
           return (
             <g key={`bg-${laneIndex}`}>
-              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="#059669" stroke="#047857" strokeWidth="1" />
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="#059669" stroke="#047857" strokeWidth="1" />
               <text
                 x={LANE_HEADER_WIDTH / 2}
-                y={laneY + LANE_HEIGHT / 2}
+                y={laneY + laneH / 2}
                 textAnchor="middle"
                 fill="white"
                 fontSize="11"
                 fontFamily="Arial, sans-serif"
                 fontWeight="600"
-                transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + LANE_HEIGHT / 2})`}
+                transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + laneH / 2})`}
               >
                 {lane.name}
               </text>
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
                   x1={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
-                  y2={laneY + LANE_HEIGHT}
+                  y2={laneY + laneH}
                   stroke="#f0f0f0"
                   strokeWidth="0.5"
                   strokeDasharray="4,4"
@@ -1033,13 +1112,14 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {/* Extra lanes added by user */}
         {extraLanes.map((lane, idx) => {
           const laneIndex = data.lanes.length + idx;
-          const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
+          const laneY = laneYOffsets[laneIndex];
+          const laneH = laneHeights[laneIndex] || LANE_HEIGHT;
           const isEditingLane = editingLaneId === lane.id;
           return (
             <g key={`extra-lane-${lane.id}`}>
-              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="#059669" stroke="#047857" strokeWidth="1" />
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="#059669" stroke="#047857" strokeWidth="1" />
               {isEditingLane ? (
-                <foreignObject x={2} y={laneY + LANE_HEIGHT / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
+                <foreignObject x={2} y={laneY + laneH / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
                   <input
                     ref={laneEditInputRef}
                     value={editLaneText}
@@ -1070,13 +1150,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               ) : (
                 <text
                   x={LANE_HEADER_WIDTH / 2}
-                  y={laneY + LANE_HEIGHT / 2}
+                  y={laneY + laneH / 2}
                   textAnchor="middle"
                   fill="white"
                   fontSize="11"
                   fontFamily="Arial, sans-serif"
                   fontWeight="600"
-                  transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + LANE_HEIGHT / 2})`}
+                  transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + laneH / 2})`}
                   style={{ cursor: 'pointer' }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
@@ -1088,14 +1168,14 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {lane.name}
                 </text>
               )}
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={LANE_HEIGHT} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
                   x1={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
-                  y2={laneY + LANE_HEIGHT}
+                  y2={laneY + laneH}
                   stroke="#f0f0f0"
                   strokeWidth="0.5"
                   strokeDasharray="4,4"
@@ -1148,12 +1228,16 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const toStep = data.lanes.flatMap(l => l.steps).find(s => s.id === conn.to);
           const isFromDecision = fromStep?.type === 'decision';
           
-          const fromHalfW = isFromDecision ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
-          const fromHalfH = isFromDecision ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
-          const toHalfW = toStep?.type === 'decision' ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
-          const toHalfH = toStep?.type === 'decision' ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
+          const fromDims = getShapeDims(fromStep?.type || 'process');
+          const fromHalfW = fromDims.w / 2;
+          const fromHalfH = fromDims.h / 2;
+          const toDims = getShapeDims(toStep?.type || 'process');
+          const toHalfW = toDims.w / 2;
+          const toHalfH = toDims.h / 2;
 
-          const isSameLane = Math.abs(dy) < LANE_HEIGHT / 2;
+          const fromLane = stepPositions[conn.from]?.laneIndex ?? 0;
+          const toLane = stepPositions[conn.to]?.laneIndex ?? 0;
+          const isSameLane = fromLane === toLane;
           const isSameColumn = Math.abs(dx) < CELL_WIDTH / 2;
           
           const isYes = conn.label?.toLowerCase() === 'yes';
@@ -1174,7 +1258,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const startY = fromPos.y;
 
             if (isSameLane && dx > 0) {
-              path = `M ${startX} ${startY} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
+              const endX = toPos.x - toHalfW - GAP;
+              if (hSegHits(startY, startX, endX, skip)) {
+                const laneTop = laneYOffsets[fromLane] + GAP;
+                path = `M ${startX} ${startY} L ${startX} ${laneTop} L ${endX} ${laneTop} L ${endX} ${toPos.y}`;
+              } else {
+                path = `M ${startX} ${startY} L ${endX} ${toPos.y}`;
+              }
             } else {
               // Different lane → elbow with shape-avoiding vertical segment
               const midX = findClearVert((fromPos.x + toPos.x) / 2, startY, toPos.y, skip);
@@ -1188,35 +1278,29 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const startX = fromPos.x;
             const startY = fromPos.y + fromHalfH;
 
-            if (isSameColumn) {
+            if (isSameColumn && dy > 0) {
+              // Target directly below → straight down
               path = `M ${startX} ${startY} L ${toPos.x} ${toPos.y - toHalfH - GAP}`;
-            } else if (dx < 0) {
-              // Loopback LEFT → down, across, up to target
-              const baseLaneIdx = Math.max(
-                stepPositions[conn.from]?.laneIndex ?? 0,
-                stepPositions[conn.to]?.laneIndex ?? 0
-              );
-              let routeY = Math.max(
-                startY + GAP + 10,
-                HEADER_HEIGHT + baseLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8
-              );
+            } else if (isSameLane || toLane > fromLane) {
+              // Target is in the same lane or a lane below → go down then across to target
+              const turnY = Math.max(startY + GAP + 10, toPos.y);
+              if (Math.abs(turnY - toPos.y) < 5) {
+                // Target is roughly at the same Y → simple L-shape: down then right/left
+                path = `M ${startX} ${startY} L ${startX} ${toPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
+              } else {
+                // Target is above the turn point → go down, across, then up
+                const midX = findClearVert(toPos.x, startY, turnY, skip);
+                path = `M ${startX} ${startY} L ${startX} ${turnY} L ${midX} ${turnY} L ${midX} ${toPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
+              }
+            } else {
+              // Target is in a lane above → go down to a clear horizontal channel, across, then up
+              const lowerLane = Math.max(fromLane, toLane);
+              let routeY = laneYOffsets[lowerLane + 1] - 8;
               routeY += getHSpread(routeY, startX, toPos.x);
               path = `M ${startX} ${startY} L ${startX} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
-              labelX = startX + 14;
-              labelY = startY + 14;
-            } else {
-              // Target to the right → down, right, then to target
-              let routeY = startY + GAP + 15;
-              // Check if horizontal segment hits any shape — reroute below if so
-              if (hSegHits(routeY, startX, toPos.x, skip)) {
-                const maxLane = Math.max(stepPositions[conn.from]?.laneIndex ?? 0, stepPositions[conn.to]?.laneIndex ?? 0);
-                routeY = HEADER_HEIGHT + (maxLane + 1) * LANE_HEIGHT - 8;
-                routeY += getHSpread(routeY, startX, toPos.x);
-              }
-              path = `M ${startX} ${startY} L ${startX} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y - toHalfH - GAP}`;
-              labelX = startX + 14;
-              labelY = startY + 14;
             }
+            labelX = startX + 14;
+            labelY = startY + 14;
 
           } else if (isFromDecision) {
             // Decision without Yes/No label → default exit right
@@ -1232,9 +1316,19 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             labelY = startY - 8;
 
           } else if (isSameLane && dx > 0) {
-            // ===== Same lane, going RIGHT → straight =====
-            path = `M ${fromPos.x + fromHalfW} ${fromPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
-            labelX = (fromPos.x + fromHalfW + toPos.x - toHalfW) / 2;
+            // ===== Same lane, going RIGHT =====
+            const startX = fromPos.x + fromHalfW;
+            const endX = toPos.x - toHalfW - GAP;
+            // Check if the straight line passes through any shape between them
+            if (hSegHits(fromPos.y, startX, endX, skip)) {
+              // Route above the shapes: up, across, down
+              const laneTop = laneYOffsets[fromLane] + GAP;
+              const routeY = laneTop;
+              path = `M ${startX} ${fromPos.y} L ${startX} ${routeY} L ${endX} ${routeY} L ${endX} ${toPos.y}`;
+            } else {
+              path = `M ${startX} ${fromPos.y} L ${endX} ${toPos.y}`;
+            }
+            labelX = (startX + endX) / 2;
             labelY = fromPos.y - 10;
 
           } else if (isSameLane && dx < 0) {
@@ -1242,7 +1336,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const startX = fromPos.x - fromHalfW;
             const endX = toPos.x + toHalfW;
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
-            let routeY = HEADER_HEIGHT + fromLaneIdx * LANE_HEIGHT + LANE_HEIGHT - 8;
+            let routeY = laneYOffsets[fromLaneIdx + 1] - 8;
             routeY += getHSpread(routeY, startX, endX);
             path = `M ${startX} ${fromPos.y} L ${startX - GAP} ${fromPos.y} L ${startX - GAP} ${routeY} L ${endX + GAP} ${routeY} L ${endX + GAP} ${toPos.y} L ${endX} ${toPos.y}`;
             labelX = (startX + endX) / 2;
@@ -1274,7 +1368,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
             const toLaneIdx = stepPositions[conn.to]?.laneIndex ?? 0;
             const maxLaneIdx = Math.max(fromLaneIdx, toLaneIdx);
-            let routeY = HEADER_HEIGHT + (maxLaneIdx + 1) * LANE_HEIGHT - 8;
+            let routeY = (laneYOffsets[maxLaneIdx + 1] || laneYOffsets[totalLanes]) - 8;
             routeY += getHSpread(routeY, fromPos.x, toPos.x);
             path = `M ${fromPos.x} ${startY} L ${fromPos.x} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
             labelX = (fromPos.x + toPos.x) / 2;

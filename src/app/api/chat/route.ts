@@ -93,11 +93,29 @@ Key rules:
 
 DECISION POINT RULES (CRITICAL):
 - Every decision (diamond) MUST have exactly TWO outgoing connections: one labeled "Yes" and one labeled "No"
-- The "Yes" path should go to the NEXT step (typically same lane or forward in the flow)
-- The "No" path should go to an ALTERNATIVE step (e.g., return to a previous step, go to a rejection step, or a different lane)
-- The "Yes" target should be at a DIFFERENT x position or lane than the "No" target so arrows don't overlap
-- Example: If decision is at x:3, "Yes" target could be at x:4 in the same lane, "No" target at x:4 in a different lane or looping back to x:1
+- Both "Yes" and "No" paths MUST lead to a clear activity/process shape (rectangle) — NEVER to another decision directly
+- The "Yes" path continues the MAIN flow → goes to the next process step at x+1 in the same lane (rightward continuation)
+- The "No" path MUST lead to a NEW, DISTINCT activity/process step that describes what happens when the answer is No (e.g., "Revise Request", "Escalate Issue", "Rework Document", "Notify Rejection")
+- The "No" path must NEVER loop back to the SAME decision shape. It must always go to a different process/activity step first.
+- PLACEMENT OF THE "No" TARGET: Place the "No" activity at the SAME x position as the decision but in a DIFFERENT lane (the lane below the decision). This creates a clean straight-down arrow from the decision's bottom tip to the "No" activity directly below it.
+- Example: Decision "Approved?" at x:3, lane "Manager" → "Yes" goes to "Process Order" at x:4 in "Manager" lane → "No" goes to "Revise Request" at x:3 in "Employee" lane (directly below). "Revise Request" then connects forward to the appropriate next step.
+- If the "No" activity needs rework, connect it to an earlier process step (NOT back to the decision)
 - NEVER leave decision connections without "Yes"/"No" labels
+- Decision "Yes" and "No" paths must NEVER connect to a document shape. They must ALWAYS connect to a process/activity rectangle.
+
+DOCUMENT SHAPE RULES (CRITICAL — READ CAREFULLY):
+- ALWAYS include relevant input and output documents in the FIRST flowchart generation. Do NOT wait for the user to ask for documents separately. If a process step naturally produces or requires a document (e.g., Purchase Order, Invoice, Approval Form, Contract, Report, etc.), include it as a document shape from the start.
+- Documents are SIDE-ATTACHED to process/activity shapes. They are NOT part of the main process flow chain.
+- The MAIN FLOW CHAIN must ONLY consist of process (rectangle), decision (diamond), start (oval), and end (oval) shapes connected in sequence. Documents are NEVER in this chain.
+- A document has exactly ONE connection: either FROM a process step (output document) or TO a process step (input document). A document NEVER connects to another document or to a decision.
+- OUTPUT DOCUMENT: Process step → Document (the process produces this document). The document is a dead-end — nothing flows out of it.
+- INPUT DOCUMENT: Document → Process step (the process requires this document). The document is a dead-end source — nothing flows into it.
+- CONNECTIONS STRUCTURE: The main flow goes Process A → Process B → Decision → Process C etc. Separately, Process A → "Invoice" (output doc), and "Purchase Order" → Process B (input doc). The documents branch off the main chain, they do NOT sit between two process steps.
+- NEVER chain: Process → Document → Process. This is WRONG. The document must be a leaf node (dead-end) attached to one process step only.
+- Place documents in the SAME LANE as the department/role that creates or issues them — documents do NOT get their own separate swimlane
+- Place the document at the SAME x position as its associated process step so the connection is short and clear
+- Documents do NOT get step numbers — they are supplementary to the flow
+- NEVER create a dedicated swimlane just for documents
 
 If the user uploads context documents (ERP data, org structure), incorporate that information into the process design.
 

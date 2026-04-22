@@ -84,7 +84,7 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
   while (queue.length > 0) {
     const currentId = queue.shift()!;
     const currentStep = allSteps.find(s => s.id === currentId);
-    if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+    if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end' && currentStep.type !== 'document') {
       stepNumbers[currentStep.id] = stepNum++;
     }
     const neighbors = (adj[currentId] || [])
@@ -100,21 +100,62 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
     }
   }
   for (const step of allSteps) {
-    if (step.type !== 'start' && step.type !== 'end' && !stepNumbers[step.id]) {
+    if (step.type !== 'start' && step.type !== 'end' && step.type !== 'document' && !stepNumbers[step.id]) {
       stepNumbers[step.id] = stepNum++;
     }
   }
   
   const maxColumns = maxX + 1;
   const svgWidth = LANE_HEADER_WIDTH + (maxColumns * CELL_WIDTH) + 40;
-  const svgHeight = HEADER_HEIGHT + (data.lanes.length * LANE_HEIGHT) + 60;
+
+  // Compute vertical slot index for shapes sharing same (lane, x) cell
+  const cellGroups: Record<string, string[]> = {};
+  data.lanes.forEach((lane, laneIndex) => {
+    lane.steps.forEach(step => {
+      const key = `${laneIndex}:${step.x}`;
+      if (!cellGroups[key]) cellGroups[key] = [];
+      cellGroups[key].push(step.id);
+    });
+  });
+  const slotInfo: Record<string, { slotIndex: number; slotCount: number }> = {};
+  for (const ids of Object.values(cellGroups)) {
+    ids.forEach((id, idx) => {
+      slotInfo[id] = { slotIndex: idx, slotCount: ids.length };
+    });
+  }
+
+  // Compute dynamic lane heights based on max shapes stacked at the same x column
+  const laneHeights: number[] = [];
+  data.lanes.forEach((lane, laneIndex) => {
+    const colCounts: Record<number, number> = {};
+    lane.steps.forEach(step => {
+      colCounts[step.x] = (colCounts[step.x] || 0) + 1;
+    });
+    const maxStacked = Math.max(1, ...Object.values(colCounts));
+    laneHeights[laneIndex] = Math.max(LANE_HEIGHT, LANE_HEIGHT + (maxStacked - 1) * (SHAPE_HEIGHT + 30));
+  });
+  const laneYOffsets: number[] = [HEADER_HEIGHT];
+  for (let i = 0; i < data.lanes.length; i++) {
+    laneYOffsets[i + 1] = laneYOffsets[i] + (laneHeights[i] || LANE_HEIGHT);
+  }
+  const svgHeight = laneYOffsets[data.lanes.length] + 60;
 
   const getPos = (stepId: string) => {
     const pos = stepPositions[stepId];
     if (!pos) return null;
+    const laneH = laneHeights[pos.laneIndex] || LANE_HEIGHT;
+    const laneTop = laneYOffsets[pos.laneIndex];
+    const slot = slotInfo[stepId];
+    let y: number;
+    if (slot && slot.slotCount > 1) {
+      const sectionH = laneH / slot.slotCount;
+      y = laneTop + sectionH * slot.slotIndex + sectionH / 2;
+    } else {
+      y = laneTop + laneH / 2;
+    }
     return {
       x: LANE_HEADER_WIDTH + (pos.x * CELL_WIDTH) + (CELL_WIDTH / 2),
-      y: HEADER_HEIGHT + (pos.laneIndex * LANE_HEIGHT) + (LANE_HEIGHT / 2),
+      y,
     };
   };
 
@@ -127,10 +168,11 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
 
   // Layer 1: Lane backgrounds
   data.lanes.forEach((lane, laneIndex) => {
-    const laneY = HEADER_HEIGHT + (laneIndex * LANE_HEIGHT);
-    svg += `<rect x="0" y="${laneY}" width="${LANE_HEADER_WIDTH}" height="${LANE_HEIGHT}" fill="#059669" stroke="#047857" stroke-width="1"/>`;
-    svg += `<text x="${LANE_HEADER_WIDTH / 2}" y="${laneY + LANE_HEIGHT / 2}" text-anchor="middle" fill="white" font-size="11" font-family="Arial, sans-serif" font-weight="600" transform="rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + LANE_HEIGHT / 2})">${escapeXml(lane.name)}</text>`;
-    svg += `<rect x="${LANE_HEADER_WIDTH}" y="${laneY}" width="${svgWidth - LANE_HEADER_WIDTH}" height="${LANE_HEIGHT}" fill="white" stroke="#d1d5db" stroke-width="1"/>`;
+    const laneY = laneYOffsets[laneIndex];
+    const laneH = laneHeights[laneIndex] || LANE_HEIGHT;
+    svg += `<rect x="0" y="${laneY}" width="${LANE_HEADER_WIDTH}" height="${laneH}" fill="#059669" stroke="#047857" stroke-width="1"/>`;
+    svg += `<text x="${LANE_HEADER_WIDTH / 2}" y="${laneY + laneH / 2}" text-anchor="middle" fill="white" font-size="11" font-family="Arial, sans-serif" font-weight="600" transform="rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + laneH / 2})">${escapeXml(lane.name)}</text>`;
+    svg += `<rect x="${LANE_HEADER_WIDTH}" y="${laneY}" width="${svgWidth - LANE_HEADER_WIDTH}" height="${laneH}" fill="white" stroke="#d1d5db" stroke-width="1"/>`;
   });
 
   // Layer 2: Arrows (before shapes so shapes sit on top)
@@ -154,7 +196,9 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
     const fHH = isFromDec ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
     const tHW = toStep?.type === 'decision' ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
     const tHH = toStep?.type === 'decision' ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
-    const isSameLane = Math.abs(dy) < LANE_HEIGHT / 2;
+    const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
+    const toLaneIdx = stepPositions[conn.to]?.laneIndex ?? 0;
+    const isSameLane = fromLaneIdx === toLaneIdx;
     const isSameCol = Math.abs(dx) < CELL_WIDTH / 2;
     const isYes = conn.label?.toLowerCase() === 'yes';
     const isNo = conn.label?.toLowerCase() === 'no';
@@ -176,7 +220,8 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
       if (isSameCol) {
         path = `M ${fromPos.x} ${sy} L ${toPos.x} ${toPos.y - tHH - GAP}`;
       } else if (dx < 0) {
-        const ry = Math.max(sy + GAP + 10, HEADER_HEIGHT + Math.max(stepPositions[conn.from]?.laneIndex ?? 0, stepPositions[conn.to]?.laneIndex ?? 0) * LANE_HEIGHT + LANE_HEIGHT - 8);
+        const baseLane = Math.max(stepPositions[conn.from]?.laneIndex ?? 0, stepPositions[conn.to]?.laneIndex ?? 0);
+        const ry = Math.max(sy + GAP + 10, laneYOffsets[baseLane + 1] - 8);
         path = `M ${fromPos.x} ${sy} L ${fromPos.x} ${ry} L ${toPos.x} ${ry} L ${toPos.x} ${toPos.y + tHH + GAP}`;
       } else {
         const ry = sy + GAP + 15;
@@ -188,7 +233,7 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
       lx = (fromPos.x + fHW + toPos.x - tHW) / 2; ly = fromPos.y - 10;
     } else if (isSameLane && dx < 0) {
       const fromLI = stepPositions[conn.from]?.laneIndex ?? 0;
-      const ry = HEADER_HEIGHT + fromLI * LANE_HEIGHT + LANE_HEIGHT - 8;
+      const ry = laneYOffsets[fromLI + 1] - 8;
       path = `M ${fromPos.x - fHW} ${fromPos.y} L ${fromPos.x - fHW - GAP} ${fromPos.y} L ${fromPos.x - fHW - GAP} ${ry} L ${toPos.x + tHW + GAP} ${ry} L ${toPos.x + tHW + GAP} ${toPos.y} L ${toPos.x + tHW} ${toPos.y}`;
       lx = (fromPos.x + toPos.x) / 2; ly = ry + 12;
     } else if (isSameCol && dy > 0) {
@@ -204,7 +249,7 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
     } else {
       const fromLI = stepPositions[conn.from]?.laneIndex ?? 0;
       const toLI = stepPositions[conn.to]?.laneIndex ?? 0;
-      const ry = HEADER_HEIGHT + (Math.max(fromLI, toLI) + 1) * LANE_HEIGHT - 8;
+      const ry = (laneYOffsets[Math.max(fromLI, toLI) + 1] || laneYOffsets[data.lanes.length]) - 8;
       path = `M ${fromPos.x} ${fromPos.y + fHH} L ${fromPos.x} ${ry} L ${toPos.x} ${ry} L ${toPos.x} ${toPos.y + tHH + GAP}`;
       lx = (fromPos.x + toPos.x) / 2; ly = ry - 8;
     }

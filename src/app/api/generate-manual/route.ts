@@ -67,18 +67,18 @@ function extractStepsFromSwimlane(swimlaneData: any): {
   while (queue.length > 0) {
     const currentId = queue.shift()!;
     const currentStep = stepMap[currentId];
-    if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+    if (currentStep && currentStep.type === 'document') {
+      documentLabels.add(currentStep.label);
+    } else if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
       stepIdToNum[currentId] = stepNum;
       stepIdToLane[currentId] = laneMap[currentId];
-      const isDoc = currentStep.type === 'document';
-      if (isDoc) documentLabels.add(currentStep.label);
       steps.push({
         stepNumber: stepNum,
         stepName: currentStep.label,
         responsible: laneMap[currentId],
         type: currentStep.type,
         id: currentId,
-        isDocument: isDoc,
+        isDocument: false,
       });
       stepNum++;
     }
@@ -98,18 +98,18 @@ function extractStepsFromSwimlane(swimlaneData: any): {
 
   // Fallback: add any unreachable steps
   for (const step of allStepsList) {
-    if (step.type !== 'start' && step.type !== 'end' && !stepIdToNum[step.id]) {
+    if (step.type === 'document' && !documentLabels.has(step.label)) {
+      documentLabels.add(step.label);
+    } else if (step.type !== 'start' && step.type !== 'end' && step.type !== 'document' && !stepIdToNum[step.id]) {
       stepIdToNum[step.id] = stepNum;
       stepIdToLane[step.id] = laneMap[step.id];
-      const isDoc = step.type === 'document';
-      if (isDoc) documentLabels.add(step.label);
       steps.push({
         stepNumber: stepNum,
         stepName: step.label,
         responsible: laneMap[step.id],
         type: step.type,
         id: step.id,
-        isDocument: isDoc,
+        isDocument: false,
       });
       stepNum++;
     }
@@ -170,28 +170,50 @@ export async function POST(request: NextRequest) {
         outputs: '-',
       }));
 
+      // Build a lookup for document shapes by their ID
+      const docMap: Record<string, string> = {}; // docId → label
+      for (const lane of swimlaneData.lanes) {
+        if (lane.steps) {
+          for (const step of lane.steps) {
+            if (step.type === 'document') {
+              docMap[step.id] = step.label;
+            }
+          }
+        }
+      }
+
       // For document shapes, figure out which steps feed into/out of them
       if (swimlaneData.connections) {
         for (const conn of swimlaneData.connections) {
-          const fromStep = extracted.steps.find(s => s.id === conn.from);
-          const toStep = extracted.steps.find(s => s.id === conn.to);
-          if (fromStep && toStep) {
-            // If arrow goes INTO a document shape, the source step outputs that document
-            if (toStep.isDocument) {
-              const srcEntry = skeleton.find(e => e.stepNumber === fromStep.stepNumber);
-              if (srcEntry && srcEntry.outputs === '-') {
-                srcEntry.outputs = toStep.stepName;
-              } else if (srcEntry && srcEntry.outputs !== '-') {
-                srcEntry.outputs += ', ' + toStep.stepName;
+          const fromIsDoc = !!docMap[conn.from];
+          const toIsDoc = !!docMap[conn.to];
+          const fromProcessStep = extracted.steps.find(s => s.id === conn.from);
+          const toProcessStep = extracted.steps.find(s => s.id === conn.to);
+
+          if (!fromIsDoc && !toIsDoc) continue; // neither end is a document
+
+          // Arrow: Process → Document  (the process step OUTPUTS this document)
+          if (fromProcessStep && toIsDoc) {
+            const docName = docMap[conn.to];
+            const entry = skeleton.find(e => e.stepNumber === fromProcessStep.stepNumber);
+            if (entry) {
+              if (entry.outputs === '-') {
+                entry.outputs = docName;
+              } else if (!entry.outputs.includes(docName)) {
+                entry.outputs += ', ' + docName;
               }
             }
-            // If arrow goes FROM a document shape, the target step has that document as input
-            if (fromStep.isDocument) {
-              const tgtEntry = skeleton.find(e => e.stepNumber === toStep.stepNumber);
-              if (tgtEntry && tgtEntry.inputs === '-') {
-                tgtEntry.inputs = fromStep.stepName;
-              } else if (tgtEntry && tgtEntry.inputs !== '-') {
-                tgtEntry.inputs += ', ' + fromStep.stepName;
+          }
+
+          // Arrow: Document → Process  (the process step receives this document as INPUT)
+          if (fromIsDoc && toProcessStep) {
+            const docName = docMap[conn.from];
+            const entry = skeleton.find(e => e.stepNumber === toProcessStep.stepNumber);
+            if (entry) {
+              if (entry.inputs === '-') {
+                entry.inputs = docName;
+              } else if (!entry.inputs.includes(docName)) {
+                entry.inputs += ', ' + docName;
               }
             }
           }
