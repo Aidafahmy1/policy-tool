@@ -6,7 +6,7 @@ const anthropic = new Anthropic({
 });
 
 // Increase timeout for AI API calls (Vercel default is 10s)
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // ── Helper: extract steps from swimlane data ────────────────────────────
 interface ExtractedStep {
@@ -275,20 +275,21 @@ ${JSON.stringify({
   processSteps: skeleton,
 }, null, 2)}`;
 
+      // Stream to keep Vercel connection alive while Opus thinks
       const stream = anthropic.messages.stream({
         model: 'claude-opus-4-5',
         max_tokens: 32000,
-        thinking: {
-          type: 'enabled',
-          budget_tokens: 16000,
-        },
+        thinking: { type: 'enabled', budget_tokens: 10000 },
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       });
-      const response = await stream.finalMessage();
 
-      const textBlock = response.content.find((c) => c.type === 'text');
-      const text = textBlock?.type === 'text' ? textBlock.text : '';
+      let text = '';
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          text += event.delta.text;
+        }
+      }
 
       // Parse JSON from response
       let manualData;
@@ -357,13 +358,17 @@ ${JSON.stringify({
     const stream = anthropic.messages.stream({
       model: 'claude-opus-4-5',
       max_tokens: 32000,
-      thinking: { type: 'enabled', budget_tokens: 16000 },
+      thinking: { type: 'enabled', budget_tokens: 10000 },
       system: fallbackPrompt,
       messages: [{ role: 'user', content: contextMessage }],
     });
-    const response = await stream.finalMessage();
-    const textBlock = response.content.find((c) => c.type === 'text');
-    const text = textBlock?.type === 'text' ? textBlock.text : '';
+
+    let text = '';
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        text += event.delta.text;
+      }
+    }
 
     let manualData;
     try {
