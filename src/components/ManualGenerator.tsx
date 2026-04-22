@@ -433,15 +433,56 @@ export default function ManualGenerator({
           }),
         });
 
-        const data = await response.json();
-
-        if (data.error) {
-          setError(data.error);
+        if (!response.ok) {
+          let errText = `API error (${response.status})`;
+          try { const errData = await response.json(); errText = errData.error || errText; } catch {}
+          setError(errText);
           setIsGenerating(false);
           return;
         }
 
-        setManualData(data.manual);
+        // Read SSE stream
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let manualResult: any = null;
+        let streamError: string | null = null;
+
+        if (reader) {
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                if (parsed.done && parsed.manual) {
+                  manualResult = parsed.manual;
+                }
+                if (parsed.error) {
+                  streamError = parsed.error;
+                }
+              } catch {}
+            }
+          }
+        }
+
+        if (streamError) {
+          setError(streamError);
+          setIsGenerating(false);
+          return;
+        }
+
+        if (!manualResult) {
+          setError('No manual data received');
+          setIsGenerating(false);
+          return;
+        }
+
+        setManualData(manualResult);
       } else if (hasUploadedImage) {
         // Fallback: no structured data, use image-reading AI
         const response = await fetch('/api/generate-manual-from-image', {

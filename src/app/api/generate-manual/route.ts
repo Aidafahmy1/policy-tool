@@ -275,67 +275,78 @@ ${JSON.stringify({
   processSteps: skeleton,
 }, null, 2)}`;
 
-      // Stream to keep Vercel connection alive while Opus thinks
-      const stream = anthropic.messages.stream({
-        model: 'claude-opus-4-5',
-        max_tokens: 32000,
-        thinking: { type: 'enabled', budget_tokens: 10000 },
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      });
+      // Helper: stream AI, collect text, parse, and return SSE to keep Vercel alive
+      const encoder = new TextEncoder();
+      const skeletonCopy = skeleton;
+      const stepsForOverwrite = extracted.steps;
 
-      let text = '';
-      for await (const event of stream) {
-        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-          text += event.delta.text;
-        }
-      }
+      const readableStream = new ReadableStream({
+        async start(controller) {
+          try {
+            const aiStream = anthropic.messages.stream({
+              model: 'claude-sonnet-4-5-20250514',
+              max_tokens: 16000,
+              thinking: { type: 'enabled', budget_tokens: 5000 },
+              system: systemPrompt,
+              messages: [{ role: 'user', content: userMessage }],
+            });
 
-      // Parse JSON from response
-      let manualData;
-      try {
-        const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (codeBlockMatch) {
-          manualData = JSON.parse(codeBlockMatch[1].trim());
-        } else {
-          const jsonStart = text.indexOf('{');
-          const jsonEnd = text.lastIndexOf('}');
-          if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-            manualData = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
-          } else {
-            manualData = JSON.parse(text.trim());
+            let text = '';
+            for await (const event of aiStream) {
+              if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                text += event.delta.text;
+              }
+              // Send keep-alive ping to client
+              controller.enqueue(encoder.encode(`data: {"ping":true}\n\n`));
+            }
+
+            // Parse JSON from response
+            let manualData;
+            const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (codeBlockMatch) {
+              manualData = JSON.parse(codeBlockMatch[1].trim());
+            } else {
+              const jsonStart = text.indexOf('{');
+              const jsonEnd = text.lastIndexOf('}');
+              if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                manualData = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+              } else {
+                manualData = JSON.parse(text.trim());
+              }
+            }
+
+            // FORCE-OVERWRITE: Guarantee step names, numbers, responsible, inputs/outputs match flowchart
+            manualData.processName = exactProcessName;
+            manualData.stakeholders = extracted.stakeholders;
+            const aiSteps = manualData.processSteps || [];
+            manualData.processSteps = stepsForOverwrite.map((expected, i) => {
+              const aiStep = aiSteps.find((s: any) => s.stepNumber === expected.stepNumber) || aiSteps[i] || {};
+              return {
+                stepNumber: expected.stepNumber,
+                stepName: expected.stepName,
+                description: aiStep.description || `Step ${expected.stepNumber}: ${expected.stepName}`,
+                responsible: expected.responsible,
+                accountable: aiStep.accountable || expected.responsible,
+                consulted: aiStep.consulted || '-',
+                informed: aiStep.informed || '-',
+                inputs: skeletonCopy[i]?.inputs || '-',
+                outputs: skeletonCopy[i]?.outputs || '-',
+              };
+            });
+
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, manual: manualData })}\n\n`));
+            controller.close();
+          } catch (err) {
+            console.error('Manual stream error:', err);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : 'Generation failed' })}\n\n`));
+            controller.close();
           }
-        }
-      } catch (parseError) {
-        console.error('JSON parse error:', parseError);
-        console.error('Response was:', text.substring(0, 500));
-        return NextResponse.json({ error: 'Failed to parse manual data' }, { status: 500 });
-      }
-
-      // ── FORCE-OVERWRITE: Guarantee step names, numbers, responsible, inputs/outputs match flowchart ──
-      manualData.processName = exactProcessName;
-      manualData.stakeholders = extracted.stakeholders;
-
-      const aiSteps = manualData.processSteps || [];
-
-      // Rebuild processSteps to guarantee correctness
-      manualData.processSteps = extracted.steps.map((expected, i) => {
-        // Try to find matching AI step by number or position
-        const aiStep = aiSteps.find((s: any) => s.stepNumber === expected.stepNumber) || aiSteps[i] || {};
-        return {
-          stepNumber: expected.stepNumber,
-          stepName: expected.stepName,  // LOCKED from flowchart
-          description: aiStep.description || `Step ${expected.stepNumber}: ${expected.stepName}`,
-          responsible: expected.responsible,  // LOCKED from flowchart
-          accountable: aiStep.accountable || expected.responsible,
-          consulted: aiStep.consulted || '-',
-          informed: aiStep.informed || '-',
-          inputs: skeleton[i]?.inputs || '-',   // LOCKED from flowchart
-          outputs: skeleton[i]?.outputs || '-',  // LOCKED from flowchart
-        };
+        },
       });
 
-      return NextResponse.json({ manual: manualData });
+      return new Response(readableStream, {
+        headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+      });
     }
 
     // ── PATH B: Fallback for mermaid-only (no swimlane data) ──────────
@@ -355,41 +366,53 @@ ${JSON.stringify({
 
     const fallbackPrompt = `You are an expert business process consultant generating a process manual as JSON. Output ONLY valid JSON with this structure: { "processName", "processLevel", "processObjectives", "processScope", "stakeholders": [...], "authorityMatrixDefinition": {...}, "processSteps": [{ "stepNumber", "stepName", "description", "responsible", "accountable", "consulted", "informed", "inputs", "outputs" }] }. Return ONLY valid JSON. No markdown, no explanation.`;
 
-    const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-5',
-      max_tokens: 32000,
-      thinking: { type: 'enabled', budget_tokens: 10000 },
-      system: fallbackPrompt,
-      messages: [{ role: 'user', content: contextMessage }],
+    const encoder = new TextEncoder();
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          const aiStream = anthropic.messages.stream({
+            model: 'claude-sonnet-4-5-20250514',
+            max_tokens: 16000,
+            thinking: { type: 'enabled', budget_tokens: 5000 },
+            system: fallbackPrompt,
+            messages: [{ role: 'user', content: contextMessage }],
+          });
+
+          let text = '';
+          for await (const event of aiStream) {
+            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+              text += event.delta.text;
+            }
+            controller.enqueue(encoder.encode(`data: {"ping":true}\n\n`));
+          }
+
+          let manualData;
+          const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (codeBlockMatch) {
+            manualData = JSON.parse(codeBlockMatch[1].trim());
+          } else {
+            const jsonStart = text.indexOf('{');
+            const jsonEnd = text.lastIndexOf('}');
+            if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+              manualData = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+            } else {
+              manualData = JSON.parse(text.trim());
+            }
+          }
+
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, manual: manualData })}\n\n`));
+          controller.close();
+        } catch (err) {
+          console.error('Manual stream error:', err);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : 'Generation failed' })}\n\n`));
+          controller.close();
+        }
+      },
     });
 
-    let text = '';
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        text += event.delta.text;
-      }
-    }
-
-    let manualData;
-    try {
-      const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (codeBlockMatch) {
-        manualData = JSON.parse(codeBlockMatch[1].trim());
-      } else {
-        const jsonStart = text.indexOf('{');
-        const jsonEnd = text.lastIndexOf('}');
-        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-          manualData = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
-        } else {
-          manualData = JSON.parse(text.trim());
-        }
-      }
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError);
-      return NextResponse.json({ error: 'Failed to parse manual data' }, { status: 500 });
-    }
-
-    return NextResponse.json({ manual: manualData });
+    return new Response(readableStream, {
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+    });
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error('Manual generation error:', errMsg);
