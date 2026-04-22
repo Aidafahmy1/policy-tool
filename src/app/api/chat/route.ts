@@ -130,8 +130,8 @@ When the user uploads an org structure document (org chart, hierarchy, employee 
 
 Be conversational and helpful. Guide the user through building their process step by step.`;
 
-// Increase timeout for AI API calls (Vercel default is 10s)
-export const maxDuration = 60;
+// Increase timeout for AI API calls
+export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
   try {
@@ -194,45 +194,57 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-5',
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT
-        + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nWhen the user asks to modify, update, add, remove, or change steps/connections/labels in the flowchart, you MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes while preserving everything else. Keep the same step IDs for unchanged steps so the layout stays consistent. Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')
-        + (uploadedImageBase64 ? `\n\nIMPORTANT — UPLOADED FLOWCHART IMAGE:
+    const fullSystem = SYSTEM_PROMPT
+      + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nWhen the user asks to modify, update, add, remove, or change steps/connections/labels in the flowchart, you MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes while preserving everything else. Keep the same step IDs for unchanged steps so the layout stays consistent. Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')
+      + (uploadedImageBase64 ? `\n\nIMPORTANT — UPLOADED FLOWCHART IMAGE:
 The user has uploaded a flowchart/process diagram image. You MUST:
 1. Carefully analyze the image to identify all process steps, decision points, roles/departments (swimlanes), and connections.
 2. Describe what you see in the flowchart so the user knows you understood it.
 3. When the user asks for suggestions or improvements, provide concrete, actionable recommendations (e.g., missing steps, unclear decision paths, missing roles, compliance gaps, efficiency improvements).
 4. If the user asks you to recreate or convert the flowchart, generate BOTH a \`\`\`mermaid\`\`\` block AND a \`\`\`swimlane-json\`\`\` block that faithfully reproduces the uploaded diagram as an editable flowchart. Preserve the original structure but you may improve layout and clarity.
 5. The image is available for ALL messages in this conversation, so you can reference it in follow-up questions.
-6. You can proactively offer to recreate the flowchart as an editable diagram if the user hasn't asked yet.` : ''),
+6. You can proactively offer to recreate the flowchart as an editable diagram if the user hasn't asked yet.` : '');
+
+    const anthropicStream = anthropic.messages.stream({
+      model: 'claude-opus-4-5',
+      max_tokens: 16000,
+      system: fullSystem,
       messages: apiMessages,
     });
-    const response = await stream.finalMessage();
 
-    const textBlock = response.content.find((c) => c.type === 'text');
-    const text = textBlock?.type === 'text' ? textBlock.text : '';
+    // Stream SSE events to keep the connection alive and prevent Vercel timeout
+    let fullText = '';
+    const encoder = new TextEncoder();
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const event of anthropicStream) {
+            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+              fullText += event.delta.text;
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: event.delta.text })}\n\n`));
+            }
+          }
+          // Parse the complete text and send final result
+          const mermaidMatch = fullText.match(/```mermaid\n([\s\S]*?)```/);
+          const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : null;
+          const swimlaneMatch = fullText.match(/```swimlane-json\n([\s\S]*?)```/);
+          let swimlaneData = null;
+          if (swimlaneMatch) {
+            try { swimlaneData = JSON.parse(swimlaneMatch[1].trim()); }
+            catch (e) { console.error('Failed to parse swimlane JSON:', e); }
+          }
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, message: fullText, mermaidCode, swimlaneData })}\n\n`));
+          controller.close();
+        } catch (err) {
+          console.error('Stream error:', err);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : 'Stream failed' })}\n\n`));
+          controller.close();
+        }
+      },
+    });
 
-    // Extract Mermaid code if present
-    const mermaidMatch = text.match(/```mermaid\n([\s\S]*?)```/);
-    const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : null;
-
-    // Extract swimlane JSON if present
-    const swimlaneMatch = text.match(/```swimlane-json\n([\s\S]*?)```/);
-    let swimlaneData = null;
-    if (swimlaneMatch) {
-      try {
-        swimlaneData = JSON.parse(swimlaneMatch[1].trim());
-      } catch (e) {
-        console.error('Failed to parse swimlane JSON:', e);
-      }
-    }
-
-    return NextResponse.json({
-      message: text,
-      mermaidCode,
-      swimlaneData,
+    return new Response(readableStream, {
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
     });
   } catch (error) {
     console.error('Chat API error:', error);

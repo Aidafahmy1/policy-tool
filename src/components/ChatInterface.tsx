@@ -132,7 +132,7 @@ export default function ChatInterface({
         content: m!.content,
       }));
 
-      // Call chat API - include uploaded image if available
+      // Call chat API - include uploaded image if available (streamed SSE response)
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -144,12 +144,10 @@ export default function ChatInterface({
         }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok || data.error) {
-        const errText = data.error || `API error (${response.status})`;
+      if (!response.ok) {
+        let errText = `API error (${response.status})`;
+        try { const errData = await response.json(); errText = errData.error || errText; } catch {}
         console.error('Chat API error:', errText);
-        // Show error as assistant message so user sees it
         setMessages(prev => [...prev, {
           id: `error-${Date.now()}`,
           conversation_id: currentConversationId!,
@@ -161,11 +159,47 @@ export default function ChatInterface({
         return;
       }
 
+      // Read the SSE stream
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let data: { message?: string; mermaidCode?: string | null; swimlaneData?: any; error?: string } | null = null;
+      let streamedText = '';
+
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              if (parsed.delta) {
+                streamedText += parsed.delta;
+              }
+              if (parsed.done) {
+                data = parsed;
+              }
+              if (parsed.error) {
+                data = { message: `Sorry, something went wrong: ${parsed.error}` };
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (!data) {
+        data = { message: streamedText || 'No response received.' };
+      }
+
       // Save assistant message
       const assistantMessage: Partial<Message> = {
         conversation_id: currentConversationId!,
         role: 'assistant',
-        content: data.message,
+        content: data.message || streamedText || '',
       };
 
       const { data: savedAssistantMsg } = await supabase
@@ -180,7 +214,7 @@ export default function ChatInterface({
 
       // Update diagram if new code generated
       if (data.mermaidCode || data.swimlaneData) {
-        onNewDiagram(data.mermaidCode, data.swimlaneData);
+        onNewDiagram(data.mermaidCode || '', data.swimlaneData);
         
         // Save diagram to database with swimlane data and auto-label
         const title = data.swimlaneData?.title || 'Diagram';
