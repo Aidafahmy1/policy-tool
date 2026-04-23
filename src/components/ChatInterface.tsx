@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { supabase, Message, Conversation, Attachment } from '@/lib/supabase';
+import * as XLSX from 'xlsx';
 
 interface ChatInterfaceProps {
   conversationId: string | null;
@@ -66,12 +67,48 @@ export default function ChatInterface({
     if (!files) return;
 
     for (const file of Array.from(files)) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const content = event.target?.result as string;
-        setPendingFiles(prev => [...prev, { name: file.name, content }]);
-      };
-      reader.readAsText(file);
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
+      const isExcel = fileExt === 'xlsx' || fileExt === 'xls' || fileExt === 'xlsm' || fileExt === 'xlsb';
+
+      if (isExcel) {
+        // Handle Excel files
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const data = event.target?.result;
+            const workbook = XLSX.read(data, { type: 'binary' });
+            
+            // Convert all sheets to readable text
+            let excelContent = `Excel File: ${file.name}\n\n`;
+            workbook.SheetNames.forEach((sheetName) => {
+              const worksheet = workbook.Sheets[sheetName];
+              const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+              
+              excelContent += `--- Sheet: ${sheetName} ---\n`;
+              jsonData.forEach((row: any) => {
+                if (Array.isArray(row) && row.length > 0) {
+                  excelContent += row.join('\t') + '\n';
+                }
+              });
+              excelContent += '\n';
+            });
+            
+            setPendingFiles(prev => [...prev, { name: file.name, content: excelContent }]);
+          } catch (error) {
+            console.error('Error parsing Excel file:', error);
+            alert(`Failed to parse Excel file: ${file.name}`);
+          }
+        };
+        reader.readAsBinaryString(file);
+      } else {
+        // Handle text files (CSV, TXT, etc.)
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const content = event.target?.result as string;
+          setPendingFiles(prev => [...prev, { name: file.name, content }]);
+        };
+        reader.readAsText(file);
+      }
     }
   };
 
@@ -337,7 +374,7 @@ export default function ChatInterface({
             onChange={handleFileUpload}
             className="hidden"
             multiple
-            accept=".txt,.csv,.json,.md"
+            accept=".txt,.csv,.json,.md,.xlsx,.xls,.xlsm,.xlsb"
           />
           <button
             type="button"

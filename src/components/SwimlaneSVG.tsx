@@ -36,6 +36,7 @@ export interface DiagramEditState {
   extraShapes: Array<{ id: string; label: string; type: string; x: number; y: number }>;
   extraConnections: Array<{ from: string; to: string; label?: string }>;
   extraLanes: Array<{ id: string; name: string }>;
+  laneNameOverrides?: Record<string, string>;
 }
 
 interface SwimlaneSVGProps {
@@ -99,6 +100,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const [editingLaneId, setEditingLaneId] = useState<string | null>(null);
     const [editLaneText, setEditLaneText] = useState('');
     const laneEditInputRef = useRef<HTMLInputElement | null>(null);
+    const [laneNameOverrides, setLaneNameOverrides] = useState<Record<string, string>>({});
     const [addMode, setAddMode] = useState<'process' | 'decision' | 'document' | 'subprocess' | 'system' | 'arrow' | null>(null);
     const [arrowStart, setArrowStart] = useState<string | null>(null);
     const extraIdCounter = useRef(0);
@@ -129,6 +131,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setExtraShapes([]);
       setExtraConnections([]);
       setExtraLanes([]);
+      setLaneNameOverrides({});
       setEditingLaneId(null);
       setAddMode(null);
       setArrowStart(null);
@@ -146,6 +149,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setExtraShapes((restoredEditState.extraShapes || []) as typeof extraShapes);
       setExtraConnections(restoredEditState.extraConnections || []);
       setExtraLanes(restoredEditState.extraLanes || []);
+      setLaneNameOverrides(restoredEditState.laneNameOverrides || {});
       setEditingStepId(null);
       setEditingLaneId(null);
       setSelectedArrow(null);
@@ -1029,6 +1033,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       extraShapes: extraShapes.map(s => ({ ...s })),
                       extraConnections: extraConnections.map(c => ({ ...c })),
                       extraLanes: extraLanes.map(l => ({ ...l })),
+                      laneNameOverrides: { ...laneNameOverrides },
                     };
                     onSaveVersion(editState);
                   }}
@@ -1119,21 +1124,62 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {data.lanes.map((lane, laneIndex) => {
           const laneY = laneYOffsets[laneIndex];
           const laneH = laneHeights[laneIndex] || LANE_HEIGHT;
+          const laneKey = `orig-lane-${laneIndex}`;
+          const isEditingThisLane = editingLaneId === laneKey;
+          const displayName = laneNameOverrides[laneKey] || lane.name;
           return (
             <g key={`bg-${laneIndex}`}>
               <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="#059669" stroke="#047857" strokeWidth="1" />
-              <text
-                x={LANE_HEADER_WIDTH / 2}
-                y={laneY + laneH / 2}
-                textAnchor="middle"
-                fill="white"
-                fontSize="11"
-                fontFamily="Arial, sans-serif"
-                fontWeight="600"
-                transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + laneH / 2})`}
-              >
-                {lane.name}
-              </text>
+              {isEditingThisLane ? (
+                <foreignObject x={2} y={laneY + laneH / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
+                  <input
+                    ref={laneEditInputRef}
+                    value={editLaneText}
+                    onChange={(e) => setEditLaneText(e.target.value)}
+                    onBlur={() => {
+                      if (editLaneText.trim()) {
+                        setLaneNameOverrides(prev => ({ ...prev, [laneKey]: editLaneText.trim() }));
+                      }
+                      setEditingLaneId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (editLaneText.trim()) {
+                          setLaneNameOverrides(prev => ({ ...prev, [laneKey]: editLaneText.trim() }));
+                        }
+                        setEditingLaneId(null);
+                      }
+                      if (e.key === 'Escape') setEditingLaneId(null);
+                    }}
+                    style={{
+                      width: '100%', textAlign: 'center', border: '2px solid #3b82f6',
+                      borderRadius: '4px', background: 'white', color: '#1f2937',
+                      fontSize: '11px', fontFamily: 'Arial, sans-serif', fontWeight: 600,
+                      padding: '2px 4px', outline: 'none',
+                    }}
+                  />
+                </foreignObject>
+              ) : (
+                <text
+                  x={LANE_HEADER_WIDTH / 2}
+                  y={laneY + laneH / 2}
+                  textAnchor="middle"
+                  fill="white"
+                  fontSize="11"
+                  fontFamily="Arial, sans-serif"
+                  fontWeight="600"
+                  transform={`rotate(-90, ${LANE_HEADER_WIDTH / 2}, ${laneY + laneH / 2})`}
+                  style={{ cursor: 'pointer' }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setEditingLaneId(laneKey);
+                    setEditLaneText(displayName);
+                    setTimeout(() => laneEditInputRef.current?.focus(), 50);
+                  }}
+                >
+                  {displayName}
+                </text>
+              )}
               <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#9ca3af" strokeWidth="1" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
