@@ -193,6 +193,10 @@ const SwimlaneDiagram = forwardRef<HTMLDivElement, SwimlaneDiagramProps>(
             <div className="w-3 h-3 border-2 border-emerald-600 bg-white transform rotate-45"></div>
             <span>Decision</span>
           </div>
+          <div className="flex items-center gap-1">
+            <div className="w-4 h-4 rounded bg-blue-600" style={{borderRadius: '50% / 30%'}}></div>
+            <span>System</span>
+          </div>
         </div>
       </div>
     );

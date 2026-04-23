@@ -24,6 +24,7 @@ Shape types:
 - process: Rectangle for process steps
 - decision: Diamond for Yes/No decisions
 - document: Document shape for inputs/outputs
+- system: Cylinder shape for any system/application activity (ERP, CRM, database, IT system, software platform). Use this whenever a step involves interacting with a system — e.g., "Enter PO in SAP", "Update CRM Record", "Log in ERP", "System Validates Data"
 
 Example output format:
 
@@ -116,6 +117,13 @@ DOCUMENT SHAPE RULES (CRITICAL — READ CAREFULLY):
 - Place the document at the SAME x position as its associated process step so the connection is short and clear
 - Documents do NOT get step numbers — they are supplementary to the flow
 - NEVER create a dedicated swimlane just for documents
+
+SYSTEM SHAPE RULES:
+- Use the "system" type (cylinder shape) whenever a process step involves interacting with an IT system, ERP, CRM, database, or any software application.
+- Examples: "Enter PO in SAP", "Update CRM", "System Auto-validates", "Record in ERP", "Generate Report from BI System"
+- System shapes ARE part of the main flow chain (unlike documents). They represent an action performed on/by a system.
+- System shapes get step numbers like process shapes.
+- Place them in the lane of the person/role performing the system action.
 
 If the user uploads context documents (ERP data, org structure), incorporate that information into the process design.
 

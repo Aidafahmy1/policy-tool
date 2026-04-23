@@ -5,7 +5,7 @@ import { forwardRef, useMemo, useState, useCallback, useRef, useEffect } from 'r
 export interface ProcessStep {
   id: string;
   label: string;
-  type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess';
+  type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess' | 'system';
   x: number;
 }
 
@@ -88,7 +88,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     // Extra shapes and connections added by user
     const [extraShapes, setExtraShapes] = useState<Array<{
       id: string; label: string;
-      type: 'process' | 'decision' | 'document' | 'subprocess';
+      type: 'process' | 'decision' | 'document' | 'subprocess' | 'system';
       x: number; y: number;
       stepNumber?: number;
     }>>([]);
@@ -99,7 +99,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const [editingLaneId, setEditingLaneId] = useState<string | null>(null);
     const [editLaneText, setEditLaneText] = useState('');
     const laneEditInputRef = useRef<HTMLInputElement | null>(null);
-    const [addMode, setAddMode] = useState<'process' | 'decision' | 'document' | 'subprocess' | 'arrow' | null>(null);
+    const [addMode, setAddMode] = useState<'process' | 'decision' | 'document' | 'subprocess' | 'system' | 'arrow' | null>(null);
     const [arrowStart, setArrowStart] = useState<string | null>(null);
     const extraIdCounter = useRef(0);
     const [dragInfo, setDragInfo] = useState<{
@@ -726,6 +726,47 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           );
         }
         
+        case 'system': {
+          const sysLines = wrapText(label, 20);
+          const sysFontSize = getFontSize(label, SHAPE_WIDTH - 16, 9);
+          const sHW = SHAPE_WIDTH / 2;
+          const sHH = SHAPE_HEIGHT / 2;
+          const ellipseRy = 10;
+          return (
+            <g>
+              {/* Cylinder body */}
+              <path
+                d={`M${cx - sHW},${cy - sHH + ellipseRy}
+                   L${cx - sHW},${cy + sHH - ellipseRy}
+                   A${sHW},${ellipseRy} 0 0,0 ${cx + sHW},${cy + sHH - ellipseRy}
+                   L${cx + sHW},${cy - sHH + ellipseRy}
+                   A${sHW},${ellipseRy} 0 0,1 ${cx - sHW},${cy - sHH + ellipseRy} Z`}
+                fill="#2563eb"
+                stroke="#1d4ed8"
+                strokeWidth="1.5"
+              />
+              {/* Top ellipse */}
+              <ellipse cx={cx} cy={cy - sHH + ellipseRy} rx={sHW} ry={ellipseRy}
+                fill="#3b82f6" stroke="#1d4ed8" strokeWidth="1.5" />
+              {sysLines.map((line, i) => (
+                <text
+                  key={i}
+                  x={cx}
+                  y={cy + 6 + (i - (sysLines.length - 1) / 2) * (sysFontSize + 3)}
+                  textAnchor="middle"
+                  fill="white"
+                  fontSize={sysFontSize}
+                  fontFamily="Arial, sans-serif"
+                  fontWeight="600"
+                >
+                  {line}
+                </text>
+              ))}
+              {num && renderStepBadge(cx, cy, num, sHW, sHH, step.id)}
+            </g>
+          );
+        }
+
         case 'process':
         default: {
           const processLines = wrapText(label, 22);
@@ -919,6 +960,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             { key: 'decision' as const, label: '+ Decision' },
             { key: 'document' as const, label: '+ Document' },
             { key: 'subprocess' as const, label: '+ Subprocess' },
+            { key: 'system' as const, label: '+ System' },
             { key: 'arrow' as const, label: '→ Arrow' },
           ]).map((m) => {
             const active = addMode === m.key;
@@ -1092,7 +1134,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               >
                 {lane.name}
               </text>
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#9ca3af" strokeWidth="1" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -1100,7 +1142,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y2={laneY + laneH}
-                  stroke="#f0f0f0"
+                  stroke="#d1d5db"
                   strokeWidth="0.5"
                   strokeDasharray="4,4"
                 />
@@ -1168,7 +1210,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {lane.name}
                 </text>
               )}
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#e5e7eb" strokeWidth="0.5" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#9ca3af" strokeWidth="1" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -1176,7 +1218,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y2={laneY + laneH}
-                  stroke="#f0f0f0"
+                  stroke="#d1d5db"
                   strokeWidth="0.5"
                   strokeDasharray="4,4"
                 />
@@ -1859,6 +1901,12 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             <line x1="367" y1="2" x2="367" y2="18" stroke="#6b7280" strokeWidth="1" />
           </g>
           <text x="378" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Subprocess</text>
+
+          <g>
+            <path d="M448,5 L448,15 A8,3 0 0,0 464,15 L464,5 A8,3 0 0,1 448,5 Z" fill="#2563eb" stroke="#1d4ed8" strokeWidth="1.2" />
+            <ellipse cx="456" cy="5" rx="8" ry="3" fill="#3b82f6" stroke="#1d4ed8" strokeWidth="1.2" />
+          </g>
+          <text x="472" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">System</text>
         </g>
       </svg>
       </div>
