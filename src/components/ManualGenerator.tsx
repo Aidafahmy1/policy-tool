@@ -290,12 +290,13 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
       } else if (step.type === 'system') {
         const sHW = SHAPE_WIDTH / 2;
         const sHH = SHAPE_HEIGHT / 2;
-        const ery = 10;
-        svg += `<path d="M${cx - sHW},${cy - sHH + ery} L${cx - sHW},${cy + sHH - ery} A${sHW},${ery} 0 0,0 ${cx + sHW},${cy + sHH - ery} L${cx + sHW},${cy - sHH + ery} A${sHW},${ery} 0 0,1 ${cx - sHW},${cy - sHH + ery} Z" fill="#2563eb" stroke="#1d4ed8" stroke-width="1.5"/>`;
-        svg += `<ellipse cx="${cx}" cy="${cy - sHH + ery}" rx="${sHW}" ry="${ery}" fill="#3b82f6" stroke="#1d4ed8" stroke-width="1.5"/>`;
-        svg += `<text x="${cx}" y="${cy + 6}" text-anchor="middle" fill="white" font-size="10" font-family="Arial, sans-serif" font-weight="600">${escapedLabel.length > 18 ? escapedLabel.slice(0, 18) + '..' : escapedLabel}</text>`;
+        const erx = 14;
+        svg += `<path d="M${cx - sHW + erx},${cy - sHH} L${cx + sHW - erx},${cy - sHH} A${erx},${sHH} 0 0,1 ${cx + sHW - erx},${cy + sHH} L${cx - sHW + erx},${cy + sHH} A${erx},${sHH} 0 0,1 ${cx - sHW + erx},${cy - sHH} Z" fill="white" stroke="#1f2937" stroke-width="1.5"/>`;
+        svg += `<ellipse cx="${cx + sHW - erx}" cy="${cy}" rx="${erx}" ry="${sHH}" fill="white" stroke="#1f2937" stroke-width="1.5"/>`;
+        svg += `<ellipse cx="${cx - sHW + erx}" cy="${cy}" rx="${erx}" ry="${sHH}" fill="white" stroke="#1f2937" stroke-width="1.5"/>`;
+        svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="#1f2937" font-size="10" font-family="Arial, sans-serif" font-weight="600">${escapedLabel.length > 18 ? escapedLabel.slice(0, 18) + '..' : escapedLabel}</text>`;
         if (num) {
-          svg += `<circle cx="${cx - sHW + 10}" cy="${cy - sHH + 10}" r="8" fill="#1d4ed8" stroke="white" stroke-width="1.5"/>`;
+          svg += `<circle cx="${cx - sHW + 10}" cy="${cy - sHH + 10}" r="8" fill="#047857" stroke="white" stroke-width="1.5"/>`;
           svg += `<text x="${cx - sHW + 10}" y="${cy - sHH + 13}" text-anchor="middle" fill="white" font-size="7" font-family="Arial, sans-serif" font-weight="700">${num}</text>`;
         }
       } else {

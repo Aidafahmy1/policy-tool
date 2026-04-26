@@ -116,6 +116,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       startMouse: {x: number, y: number};
       startPoint: {x: number, y: number};
     } | null>(null);
+    // Pending arrow drag: tracks intent to drag before threshold is exceeded
+    const [pendingArrowDrag, setPendingArrowDrag] = useState<{
+      connKey: string;
+      segmentIdx: number;
+      pathPoints: {x: number, y: number}[];
+      startMouse: {x: number, y: number};
+    } | null>(null);
 
     // Reset offsets when flowchart data changes
     useEffect(() => {
@@ -253,10 +260,30 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
     // Window-level pointer events for reliable drag tracking (works even if cursor leaves SVG)
     useEffect(() => {
-      if (!dragInfo) return;
+      if (!dragInfo && !pendingArrowDrag) return;
+      const DRAG_THRESHOLD = 5;
       const handleMove = (e: PointerEvent) => {
         e.preventDefault();
         const svgPt = screenToSVG(e.clientX, e.clientY);
+        // Promote pending arrow drag to real drag once threshold exceeded
+        if (pendingArrowDrag && !dragInfo) {
+          const dx = svgPt.x - pendingArrowDrag.startMouse.x;
+          const dy = svgPt.y - pendingArrowDrag.startMouse.y;
+          if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
+            const { connKey, segmentIdx, pathPoints, startMouse } = pendingArrowDrag;
+            const insertPt = { x: startMouse.x, y: startMouse.y };
+            const newPoints = arrowOverrides[connKey]
+              ? [...arrowOverrides[connKey]]
+              : pathPoints.map(p => ({ ...p }));
+            newPoints.splice(segmentIdx + 1, 0, { ...insertPt });
+            setArrowOverrides(prev => ({ ...prev, [connKey]: newPoints }));
+            setSelectedArrow(connKey);
+            setDragInfo({ type: 'waypoint', connKey, wpIdx: segmentIdx + 1, startMouse, startPoint: insertPt });
+            setPendingArrowDrag(null);
+          }
+          return;
+        }
+        if (!dragInfo) return;
         if (dragInfo.type === 'shape') {
           setPosOffsets(prev => ({
             ...prev,
@@ -277,7 +304,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
       };
       const handleUp = () => {
+        // If pointer released without crossing threshold, just select the arrow
+        if (pendingArrowDrag && !dragInfo) {
+          setSelectedArrow(prev => prev === pendingArrowDrag.connKey ? null : pendingArrowDrag.connKey);
+          setPendingArrowDrag(null);
+        }
         setDragInfo(null);
+        setPendingArrowDrag(null);
       };
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
@@ -285,7 +318,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
       };
-    }, [dragInfo, screenToSVG]);
+    }, [dragInfo, pendingArrowDrag, screenToSVG, arrowOverrides]);
 
     const handleReset = useCallback(() => {
       setPosOffsets({});
@@ -731,34 +764,37 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
         
         case 'system': {
-          const sysLines = wrapText(label, 20);
-          const sysFontSize = getFontSize(label, SHAPE_WIDTH - 16, 9);
-          const sHW = SHAPE_WIDTH / 2;
-          const sHH = SHAPE_HEIGHT / 2;
-          const ellipseRy = 10;
+          const sysLines = wrapText(label, 18);
+          const sysFontSize = getFontSize(label, SHAPE_WIDTH - 30, 9);
+          const cylHalfW = SHAPE_WIDTH / 2;  // half-width of body
+          const cylHalfH = SHAPE_HEIGHT / 2; // half-height of body
+          const erx = 14; // ellipse radius for the 3D caps
           return (
             <g>
-              {/* Cylinder body */}
+              {/* Cylinder body (horizontal - ellipses on left/right) */}
               <path
-                d={`M${cx - sHW},${cy - sHH + ellipseRy}
-                   L${cx - sHW},${cy + sHH - ellipseRy}
-                   A${sHW},${ellipseRy} 0 0,0 ${cx + sHW},${cy + sHH - ellipseRy}
-                   L${cx + sHW},${cy - sHH + ellipseRy}
-                   A${sHW},${ellipseRy} 0 0,1 ${cx - sHW},${cy - sHH + ellipseRy} Z`}
-                fill="#2563eb"
-                stroke="#1d4ed8"
+                d={`M${cx - cylHalfW + erx},${cy - cylHalfH}
+                   L${cx + cylHalfW - erx},${cy - cylHalfH}
+                   A${erx},${cylHalfH} 0 0,1 ${cx + cylHalfW - erx},${cy + cylHalfH}
+                   L${cx - cylHalfW + erx},${cy + cylHalfH}
+                   A${erx},${cylHalfH} 0 0,1 ${cx - cylHalfW + erx},${cy - cylHalfH} Z`}
+                fill="white"
+                stroke="#1f2937"
                 strokeWidth="1.5"
               />
-              {/* Top ellipse */}
-              <ellipse cx={cx} cy={cy - sHH + ellipseRy} rx={sHW} ry={ellipseRy}
-                fill="#3b82f6" stroke="#1d4ed8" strokeWidth="1.5" />
+              {/* Right ellipse cap */}
+              <ellipse cx={cx + cylHalfW - erx} cy={cy} rx={erx} ry={cylHalfH}
+                fill="white" stroke="#1f2937" strokeWidth="1.5" />
+              {/* Left ellipse cap (front face) */}
+              <ellipse cx={cx - cylHalfW + erx} cy={cy} rx={erx} ry={cylHalfH}
+                fill="white" stroke="#1f2937" strokeWidth="1.5" />
               {sysLines.map((line, i) => (
                 <text
                   key={i}
                   x={cx}
-                  y={cy + 6 + (i - (sysLines.length - 1) / 2) * (sysFontSize + 3)}
+                  y={cy + 4 + (i - (sysLines.length - 1) / 2) * (sysFontSize + 3)}
                   textAnchor="middle"
-                  fill="white"
+                  fill="#1f2937"
                   fontSize={sysFontSize}
                   fontFamily="Arial, sans-serif"
                   fontWeight="600"
@@ -766,7 +802,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {line}
                 </text>
               ))}
-              {num && renderStepBadge(cx, cy, num, sHW, sHH, step.id)}
+              {num && renderStepBadge(cx, cy, num, cylHalfW, cylHalfH, step.id)}
             </g>
           );
         }
@@ -815,6 +851,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const getShapeDims = (type: string) => {
       if (type === 'decision') return { w: DECISION_SIZE, h: DECISION_SIZE };
       if (type === 'document') return { w: DOC_WIDTH, h: DOC_HEIGHT };
+      if (type === 'system') return { w: SHAPE_WIDTH, h: SHAPE_HEIGHT };
       return { w: SHAPE_WIDTH, h: SHAPE_HEIGHT };
     };
     for (const lane of data.lanes) {
@@ -1497,40 +1534,27 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 strokeWidth={isSelected ? "2.5" : "1.5"}
                 markerEnd={markerEnd}
               />
-              {/* Wide transparent hitbox for clicking/selecting arrows */}
+              {/* Wide transparent hitbox — drag immediately on first touch */}
               <path
                 d={finalPath}
                 fill="none"
                 stroke="transparent"
-                strokeWidth="14"
-                style={{ cursor: 'pointer' }}
+                strokeWidth="16"
+                style={{ cursor: 'grab' }}
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  if (!isSelected) {
-                    setSelectedArrow(connKey);
-                  } else {
-                    // Find closest segment and add a new waypoint there
-                    const svgPt = screenToSVG(e.clientX, e.clientY);
-                    let bestSegIdx = 0;
-                    let bestDist = Infinity;
-                    for (let si = 0; si < pathPoints.length - 1; si++) {
-                      const a = pathPoints[si];
-                      const b = pathPoints[si + 1];
-                      const sdx = b.x - a.x;
-                      const sdy = b.y - a.y;
-                      const lenSq = sdx * sdx + sdy * sdy;
-                      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((svgPt.x - a.x) * sdx + (svgPt.y - a.y) * sdy) / lenSq));
-                      const projX = a.x + t * sdx;
-                      const projY = a.y + t * sdy;
-                      const dist = Math.sqrt((svgPt.x - projX) ** 2 + (svgPt.y - projY) ** 2);
-                      if (dist < bestDist) {
-                        bestDist = dist;
-                        bestSegIdx = si;
-                      }
-                    }
-                    handleSegmentClick(e, connKey, bestSegIdx, pathPoints);
+                  const svgPt = screenToSVG(e.clientX, e.clientY);
+                  let bestSegIdx = 0, bestDist = Infinity;
+                  for (let si = 0; si < pathPoints.length - 1; si++) {
+                    const a = pathPoints[si], b = pathPoints[si + 1];
+                    const sdx = b.x - a.x, sdy = b.y - a.y;
+                    const lenSq = sdx * sdx + sdy * sdy;
+                    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((svgPt.x - a.x) * sdx + (svgPt.y - a.y) * sdy) / lenSq));
+                    const dist = Math.hypot(svgPt.x - (a.x + t * sdx), svgPt.y - (a.y + t * sdy));
+                    if (dist < bestDist) { bestDist = dist; bestSegIdx = si; }
                   }
+                  setPendingArrowDrag({ connKey, segmentIdx: bestSegIdx, pathPoints, startMouse: svgPt });
                 }}
               />
               {/* Label */}
@@ -1559,16 +1583,16 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   </text>
                 </>
               )}
-              {/* Waypoint handles at ALL bend points */}
+              {/* Waypoint handles — always visible at bend points */}
               {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
                 <circle
                   key={`wp-${connKey}-${i}`}
                   data-no-export="true"
                   cx={pt.x}
                   cy={pt.y}
-                  r={isSelected ? 6 : 4}
-                  fill={isSelected ? '#3b82f6' : 'white'}
-                  stroke={isSelected ? 'white' : '#3b82f6'}
+                  r={isSelected ? 7 : 5}
+                  fill={isSelected ? '#3b82f6' : '#93c5fd'}
+                  stroke="white"
                   strokeWidth={1.5}
                   style={{ cursor: 'grab' }}
                   onPointerDown={(e) => {
@@ -1577,28 +1601,24 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   }}
                 />
               ))}
-              {/* Midpoint '+' handles to add new waypoints when selected */}
-              {isSelected && pathPoints.length >= 2 && pathPoints.slice(0, -1).map((pt, i) => {
-                const next = pathPoints[i + 1];
-                const mx = (pt.x + next.x) / 2;
-                const my = (pt.y + next.y) / 2;
-                const tooClose = pathPoints.some(p => Math.abs(p.x - mx) < 15 && Math.abs(p.y - my) < 15);
-                if (tooClose) return null;
-                return (
-                  <g
-                    key={`mid-${connKey}-${i}`}
-                    data-no-export="true"
-                    style={{ cursor: 'crosshair' }}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      handleSegmentClick(e, connKey, i, pathPoints);
-                    }}
-                  >
-                    <circle cx={mx} cy={my} r={6} fill="#dbeafe" stroke="#3b82f6" strokeWidth={1} strokeDasharray="2,2" />
-                    <text x={mx} y={my + 3.5} textAnchor="middle" fill="#3b82f6" fontSize="10" fontWeight="bold">+</text>
-                  </g>
-                );
-              })}
+              {/* Start endpoint handle — drag to reposition arrow tail */}
+              <circle
+                data-no-export="true"
+                cx={pathPoints[0].x} cy={pathPoints[0].y}
+                r={isSelected ? 6 : 4}
+                fill="white" stroke={strokeColor} strokeWidth={2}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, 0, pathPoints); }}
+              />
+              {/* End endpoint handle — drag to reposition arrowhead */}
+              <circle
+                data-no-export="true"
+                cx={pathPoints[pathPoints.length - 1].x} cy={pathPoints[pathPoints.length - 1].y}
+                r={isSelected ? 7 : 5}
+                fill={strokeColor} stroke="white" strokeWidth={2}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, pathPoints.length - 1, pathPoints); }}
+              />
               {/* Delete button when arrow is selected */}
               {isSelected && (
                 <g
@@ -1667,23 +1687,20 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               <path d={path} fill="none" stroke="white" strokeWidth="5" />
               {isSelected && <path d={path} fill="none" stroke="#3b82f6" strokeWidth="5" strokeOpacity="0.3" />}
               <path d={path} fill="none" stroke={strokeColor} strokeWidth={isSelected ? "2.5" : "1.5"} markerEnd={markerEnd} />
-              <path d={path} fill="none" stroke="transparent" strokeWidth="14" style={{ cursor: 'pointer' }}
+              <path d={path} fill="none" stroke="transparent" strokeWidth="16" style={{ cursor: 'grab' }}
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  if (!isSelected) { setSelectedArrow(connKey); }
-                  else {
-                    const svgPt = screenToSVG(e.clientX, e.clientY);
-                    let best = 0, bestD = Infinity;
-                    for (let i = 0; i < pathPoints.length - 1; i++) {
-                      const a = pathPoints[i], b = pathPoints[i + 1];
-                      const sdx = b.x - a.x, sdy = b.y - a.y, l2 = sdx * sdx + sdy * sdy;
-                      const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((svgPt.x - a.x) * sdx + (svgPt.y - a.y) * sdy) / l2));
-                      const d = Math.hypot(svgPt.x - (a.x + t * sdx), svgPt.y - (a.y + t * sdy));
-                      if (d < bestD) { bestD = d; best = i; }
-                    }
-                    handleSegmentClick(e, connKey, best, pathPoints);
+                  const svgPt = screenToSVG(e.clientX, e.clientY);
+                  let best = 0, bestD = Infinity;
+                  for (let i = 0; i < pathPoints.length - 1; i++) {
+                    const a = pathPoints[i], b = pathPoints[i + 1];
+                    const sdx = b.x - a.x, sdy = b.y - a.y, l2 = sdx * sdx + sdy * sdy;
+                    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((svgPt.x - a.x) * sdx + (svgPt.y - a.y) * sdy) / l2));
+                    const d = Math.hypot(svgPt.x - (a.x + t * sdx), svgPt.y - (a.y + t * sdy));
+                    if (d < bestD) { bestD = d; best = i; }
                   }
+                  setPendingArrowDrag({ connKey, segmentIdx: best, pathPoints, startMouse: svgPt });
                 }}
               />
               {/* Label badge for Yes/No or custom labels */}
@@ -1714,10 +1731,28 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               )}
               {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
                 <circle key={`ewp-${idx}-${i}`} data-no-export="true" cx={pt.x} cy={pt.y}
-                  r={isSelected ? 6 : 4} fill={isSelected ? '#3b82f6' : 'white'} stroke={isSelected ? 'white' : '#3b82f6'} strokeWidth={1.5}
+                  r={isSelected ? 7 : 5} fill={isSelected ? '#3b82f6' : '#93c5fd'} stroke="white" strokeWidth={1.5}
                   style={{ cursor: 'grab' }} onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, i + 1, pathPoints); }}
                 />
               ))}
+              {/* Start endpoint handle */}
+              <circle
+                data-no-export="true"
+                cx={pathPoints[0].x} cy={pathPoints[0].y}
+                r={isSelected ? 6 : 4}
+                fill="white" stroke={strokeColor} strokeWidth={2}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, 0, pathPoints); }}
+              />
+              {/* End endpoint handle (arrowhead) */}
+              <circle
+                data-no-export="true"
+                cx={pathPoints[pathPoints.length - 1].x} cy={pathPoints[pathPoints.length - 1].y}
+                r={isSelected ? 7 : 5}
+                fill={strokeColor} stroke="white" strokeWidth={2}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, pathPoints.length - 1, pathPoints); }}
+              />
               {isSelected && (
                 <g data-no-export="true" style={{ cursor: 'pointer' }} onClick={(e) => {
                   e.stopPropagation();
@@ -1949,8 +1984,10 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           <text x="378" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Subprocess</text>
 
           <g>
-            <path d="M448,5 L448,15 A8,3 0 0,0 464,15 L464,5 A8,3 0 0,1 448,5 Z" fill="#2563eb" stroke="#1d4ed8" strokeWidth="1.2" />
-            <ellipse cx="456" cy="5" rx="8" ry="3" fill="#3b82f6" stroke="#1d4ed8" strokeWidth="1.2" />
+            {/* Horizontal cylinder: ellipses on left/right */}
+            <path d="M452,2 L462,2 A4,8 0 0,1 462,18 L452,18 A4,8 0 0,1 452,2 Z" fill="white" stroke="#1f2937" strokeWidth="1.2" />
+            <ellipse cx="462" cy="10" rx="4" ry="8" fill="white" stroke="#1f2937" strokeWidth="1.2" />
+            <ellipse cx="452" cy="10" rx="4" ry="8" fill="white" stroke="#1f2937" strokeWidth="1.2" />
           </g>
           <text x="472" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">System</text>
         </g>
