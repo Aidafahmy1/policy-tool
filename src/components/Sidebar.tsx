@@ -6,9 +6,10 @@ import { supabase, Conversation } from '@/lib/supabase';
 interface SidebarProps {
   currentConversationId: string | null;
   onSelectConversation: (id: string | null) => void;
+  onCollapse?: () => void;
 }
 
-export default function Sidebar({ currentConversationId, onSelectConversation }: SidebarProps) {
+export default function Sidebar({ currentConversationId, onSelectConversation, onCollapse }: SidebarProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   useEffect(() => {
@@ -20,7 +21,10 @@ export default function Sidebar({ currentConversationId, onSelectConversation }:
       .from('conversations')
       .select('*')
       .order('updated_at', { ascending: false });
-    if (data) setConversations(data);
+    if (data) {
+      const seen = new Set<string>();
+      setConversations(data.filter(c => seen.has(c.id) ? false : seen.add(c.id) as unknown as boolean));
+    }
   };
 
   const handleNewChat = () => {
@@ -45,9 +49,22 @@ export default function Sidebar({ currentConversationId, onSelectConversation }:
 
   return (
     <div className="w-64 bg-gray-900 text-white flex flex-col h-full">
-      <div className="p-4 border-b border-gray-700">
-        <h1 className="text-xl font-bold text-emerald-400">Process Tool</h1>
-        <p className="text-xs text-gray-400 mt-1">Process Diagram Generator</p>
+      <div className="p-4 border-b border-gray-700 flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-emerald-400">Process Tool</h1>
+          <p className="text-xs text-gray-400 mt-1">Process Diagram Generator</p>
+        </div>
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white mt-0.5 flex-shrink-0"
+            title="Collapse sidebar"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M21 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <button

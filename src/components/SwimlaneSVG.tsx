@@ -5,7 +5,7 @@ import { forwardRef, useMemo, useState, useCallback, useRef, useEffect } from 'r
 export interface ProcessStep {
   id: string;
   label: string;
-  type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess' | 'system';
+  type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess' | 'system' | 'database';
   x: number;
 }
 
@@ -443,7 +443,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       while (queue.length > 0) {
         const currentId = queue.shift()!;
         const currentStep = allSteps.find(s => s.id === currentId);
-        if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end' && currentStep.type !== 'document') {
+        if (currentStep && currentStep.type !== 'document') {
           numbers[currentId] = stepNum++;
         }
         // Get neighbors sorted by: x position first, then lane index (for consistent ordering at branches)
@@ -462,7 +462,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
       // Fallback: number any remaining steps not reachable from start (shouldn't happen normally)
       for (const step of allSteps) {
-        if (step.type !== 'start' && step.type !== 'end' && step.type !== 'document' && !numbers[step.id]) {
+        if (step.type !== 'document' && !numbers[step.id]) {
           numbers[step.id] = stepNum++;
         }
       }
@@ -639,7 +639,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
       switch (step.type) {
         case 'start':
-        case 'end':
+        case 'end': {
+          const seLines = wrapText(label, 18);
+          const seFontSize = getFontSize(label, SHAPE_WIDTH - 16, 9);
           return (
             <g>
               <rect
@@ -652,12 +654,19 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#047857"
                 stroke="#065f46"
                 strokeWidth="1.5"
+                filter="url(#shadow)"
               />
-              <text x={cx} y={cy + 4} textAnchor="middle" fill="white" fontSize="11" fontFamily="Arial, sans-serif" fontWeight="600">
-                {label}
-              </text>
+              {seLines.map((line, i) => (
+                <text key={i} x={cx} y={cy + 4 + (i - (seLines.length - 1) / 2) * (seFontSize + 2)}
+                  textAnchor="middle" fill="white" fontSize={seFontSize}
+                  fontFamily="Arial, sans-serif" fontWeight="600">
+                  {line}
+                </text>
+              ))}
+              {num && renderStepBadge(cx, cy, num, halfW, halfH, step.id)}
             </g>
           );
+        }
         
         case 'decision': {
           const halfD = DECISION_SIZE / 2;
@@ -670,6 +679,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#059669"
                 stroke="#047857"
                 strokeWidth="1.5"
+                filter="url(#shadow)"
               />
               {decisionLines.map((line, i) => (
                 <text
@@ -707,6 +717,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#059669"
                 stroke="#047857"
                 strokeWidth="1.5"
+                filter="url(#shadow)"
               />
               {docLines.map((line, i) => (
                 <text
@@ -736,11 +747,12 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 y={cy - halfH}
                 width={SHAPE_WIDTH}
                 height={SHAPE_HEIGHT}
-                rx={3}
-                ry={3}
-                fill="#f3f4f6"
-                stroke="#6b7280"
+                rx={6}
+                ry={6}
+                fill="#f8f9fa"
+                stroke="#9ca3af"
                 strokeWidth="1.5"
+                filter="url(#shadow)"
               />
               <line x1={cx - halfW + 8} y1={cy - halfH} x2={cx - halfW + 8} y2={cy + halfH} stroke="#6b7280" strokeWidth="1" />
               <line x1={cx + halfW - 8} y1={cy - halfH} x2={cx + halfW - 8} y2={cy + halfH} stroke="#6b7280" strokeWidth="1" />
@@ -763,6 +775,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           );
         }
         
+        case 'database':
         case 'system': {
           const sysLines = wrapText(label, 18);
           const sysFontSize = getFontSize(label, SHAPE_WIDTH - 30, 9);
@@ -779,8 +792,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                    L${cx - cylHalfW + erx},${cy + cylHalfH}
                    A${erx},${cylHalfH} 0 0,1 ${cx - cylHalfW + erx},${cy - cylHalfH} Z`}
                 fill="white"
-                stroke="#1f2937"
+                stroke="#374151"
                 strokeWidth="1.5"
+                filter="url(#shadow)"
               />
               {/* Right ellipse cap */}
               <ellipse cx={cx + cylHalfW - erx} cy={cy} rx={erx} ry={cylHalfH}
@@ -818,11 +832,12 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 y={cy - halfH}
                 width={SHAPE_WIDTH}
                 height={SHAPE_HEIGHT}
-                rx={4}
-                ry={4}
+                rx={8}
+                ry={8}
                 fill="white"
                 stroke="#059669"
                 strokeWidth="1.5"
+                filter="url(#shadow)"
               />
               {processLines.map((line, i) => (
                 <text
@@ -851,7 +866,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const getShapeDims = (type: string) => {
       if (type === 'decision') return { w: DECISION_SIZE, h: DECISION_SIZE };
       if (type === 'document') return { w: DOC_WIDTH, h: DOC_HEIGHT };
-      if (type === 'system') return { w: SHAPE_WIDTH, h: SHAPE_HEIGHT };
+      if (type === 'system' || type === 'database') return { w: SHAPE_WIDTH, h: SHAPE_HEIGHT };
       return { w: SHAPE_WIDTH, h: SHAPE_HEIGHT };
     };
     for (const lane of data.lanes) {
@@ -987,6 +1002,84 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
       return buildPath(pts);
     };
+
+    // ── Suppress flow-through document connections & synthesize bypass arrows ──
+    // Documents must be leaf nodes (dead-ends). If the AI incorrectly placed a
+    // document as an intermediate node (has BOTH incoming and outgoing connections),
+    // we:
+    //   1. Suppress the outgoing Doc→Step connection (docFlowSuppressed)
+    //   2. Synthesize a direct Step→Step virtual connection so the flow isn't broken
+    const _activeConns = data.connections.filter(c =>
+      !deletedConnections.has(`${c.from}->${c.to}`) &&
+      !deletedShapes.has(c.from) && !deletedShapes.has(c.to)
+    );
+    const _allShapes = [...data.lanes.flatMap(l => l.steps), ...extraShapes];
+    const docFlowSuppressed = new Set<string>();
+    const virtualConns: Array<Connection & { _virtual: true }> = [];
+    for (const s of _allShapes) {
+      if (s.type !== 'document') continue;
+      const incoming = _activeConns.filter(c => c.to === s.id);
+      const outgoing = _activeConns.filter(c => c.from === s.id);
+      if (incoming.length === 0 || outgoing.length === 0) continue;
+      docFlowSuppressed.add(s.id);
+      for (const inc of incoming) {
+        for (const out of outgoing) {
+          if (!data.connections.some(c => c.from === inc.from && c.to === out.to)) {
+            virtualConns.push({ from: inc.from, to: out.to, _virtual: true });
+          }
+        }
+      }
+    }
+
+    // ── Per-connection snapping point spread ─────────────────────────────
+    // For every (shape, edge) pair that has multiple connections, assign each
+    // connection a unique offset perpendicular to the flow direction so they
+    // never share the exact same attachment point.
+    const SPREAD_STEP = 14; // px between adjacent snapping points
+    const connSpread: Record<string, { fromOffset: number; toOffset: number }> = {};
+    {
+      const exitGroups: Record<string, string[]> = {};
+      const entryGroups: Record<string, string[]> = {};
+      const _mergedForSpread = [...data.connections, ...virtualConns];
+      for (const conn of _mergedForSpread) {
+        const ck = `${conn.from}->${conn.to}`;
+        if (!('_virtual' in conn) && (deletedConnections.has(ck) || deletedShapes.has(conn.from) || deletedShapes.has(conn.to))) continue;
+        const fPos = getStepPosition(conn.from);
+        const tPos = getStepPosition(conn.to);
+        if (!fPos || !tPos) continue;
+        const cdx = tPos.x - fPos.x;
+        const cdy = tPos.y - fPos.y;
+        const fStep = [...data.lanes.flatMap(l => l.steps), ...extraShapes].find(s => s.id === conn.from);
+        const fLane = stepPositions[conn.from]?.laneIndex ?? 0;
+        const tLane = stepPositions[conn.to]?.laneIndex ?? 0;
+        const cSameLane = fLane === tLane;
+        const cSameCol = Math.abs(cdx) < CELL_WIDTH / 2;
+        if (fStep?.type === 'decision') continue; // diamond tips are fixed points
+        let exitEdge: string | null = null;
+        let entryEdge: string | null = null;
+        if      (cSameCol && cdy > 0)       { exitEdge = `${conn.from}:bottom`; entryEdge = `${conn.to}:top`; }
+        else if (cSameCol && cdy < 0)       { exitEdge = `${conn.from}:top`;    entryEdge = `${conn.to}:bottom`; }
+        else if (cSameLane && cdx < 0)      { exitEdge = `${conn.from}:left`;   entryEdge = `${conn.to}:right`; }
+        else if (cdx < 0)                   { exitEdge = `${conn.from}:bottom`; entryEdge = `${conn.to}:top`; }
+        else                                { exitEdge = `${conn.from}:right`;  entryEdge = `${conn.to}:left`; }
+        if (exitEdge)  { if (!exitGroups[exitEdge])   exitGroups[exitEdge]   = []; exitGroups[exitEdge].push(ck); }
+        if (entryEdge) { if (!entryGroups[entryEdge]) entryGroups[entryEdge] = []; entryGroups[entryEdge].push(ck); }
+      }
+      for (const keys of Object.values(exitGroups)) {
+        if (keys.length <= 1) continue;
+        keys.forEach((k, i) => {
+          if (!connSpread[k]) connSpread[k] = { fromOffset: 0, toOffset: 0 };
+          connSpread[k].fromOffset = (i - (keys.length - 1) / 2) * SPREAD_STEP;
+        });
+      }
+      for (const keys of Object.values(entryGroups)) {
+        if (keys.length <= 1) continue;
+        keys.forEach((k, i) => {
+          if (!connSpread[k]) connSpread[k] = { fromOffset: 0, toOffset: 0 };
+          connSpread[k].toOffset = (i - (keys.length - 1) / 2) * SPREAD_STEP;
+        });
+      }
+    }
 
     return (
       <div>
@@ -1144,15 +1237,16 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }}
       >
         {/* Title Header */}
-        <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill="#059669" />
+        <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill="url(#headerGrad)" />
         <text
           x={svgWidth / 2}
           y={HEADER_HEIGHT / 2 + 6}
           textAnchor="middle"
           fill="white"
-          fontSize="18"
-          fontFamily="Arial, sans-serif"
-          fontWeight="bold"
+          fontSize="16"
+          fontFamily="'Segoe UI', Arial, sans-serif"
+          fontWeight="700"
+          letterSpacing="0.8"
         >
           {data.title || 'Process Flowchart'}
         </text>
@@ -1166,7 +1260,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const displayName = laneNameOverrides[laneKey] || lane.name;
           return (
             <g key={`bg-${laneIndex}`}>
-              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="#059669" stroke="#047857" strokeWidth="1" />
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="url(#laneGrad)" stroke="none" />
               {isEditingThisLane ? (
                 <foreignObject x={2} y={laneY + laneH / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
                   <input
@@ -1217,7 +1311,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {displayName}
                 </text>
               )}
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#9ca3af" strokeWidth="1" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill={laneIndex % 2 === 0 ? 'white' : '#f8fafc'} stroke="#e2e8f0" strokeWidth="0.75" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -1225,9 +1319,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y2={laneY + laneH}
-                  stroke="#d1d5db"
+                  stroke="#e5e7eb"
                   strokeWidth="0.5"
-                  strokeDasharray="4,4"
+                  strokeDasharray="4,8"
                 />
               ))}
             </g>
@@ -1242,7 +1336,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const isEditingLane = editingLaneId === lane.id;
           return (
             <g key={`extra-lane-${lane.id}`}>
-              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="#059669" stroke="#047857" strokeWidth="1" />
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="url(#laneGrad)" stroke="none" />
               {isEditingLane ? (
                 <foreignObject x={2} y={laneY + laneH / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
                   <input
@@ -1293,7 +1387,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {lane.name}
                 </text>
               )}
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill="white" stroke="#9ca3af" strokeWidth="1" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill={laneIndex % 2 === 0 ? 'white' : '#f8fafc'} stroke="#e2e8f0" strokeWidth="0.75" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -1301,9 +1395,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   y1={laneY}
                   x2={LANE_HEADER_WIDTH + (colIndex * CELL_WIDTH)}
                   y2={laneY + laneH}
-                  stroke="#d1d5db"
+                  stroke="#e5e7eb"
                   strokeWidth="0.5"
-                  strokeDasharray="4,4"
+                  strokeDasharray="4,8"
                 />
               ))}
               {/* Delete lane button */}
@@ -1334,13 +1428,26 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           <marker id="arrowhead-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#dc2626" />
           </marker>
+          <linearGradient id="headerGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#065f46" />
+            <stop offset="100%" stopColor="#059669" />
+          </linearGradient>
+          <linearGradient id="laneGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#047857" />
+            <stop offset="100%" stopColor="#059669" />
+          </linearGradient>
+          <filter id="shadow" x="-10%" y="-10%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.10" />
+          </filter>
         </defs>
 
         {/* Connection arrows — rendered BEFORE shapes so shapes sit on top */}
-        {data.connections.map((conn, idx) => {
+        {[...data.connections, ...virtualConns].map((conn, idx) => {
           const connKey = `${conn.from}->${conn.to}`;
-          if (deletedConnections.has(connKey)) return null;
-          if (deletedShapes.has(conn.from) || deletedShapes.has(conn.to)) return null;
+          const isVirtual = '_virtual' in conn && conn._virtual;
+          if (!isVirtual && deletedConnections.has(connKey)) return null;
+          if (!isVirtual && (deletedShapes.has(conn.from) || deletedShapes.has(conn.to))) return null;
+          if (!isVirtual && docFlowSuppressed.has(conn.from)) return null; // suppress Doc→Step on real conns
 
           const fromPos = getStepPosition(conn.from);
           const toPos = getStepPosition(conn.to);
@@ -1376,6 +1483,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const GAP = ARROW_GAP;
 
           const skip = new Set([conn.from, conn.to]);
+          const spread = connSpread[connKey] || { fromOffset: 0, toOffset: 0 };
 
           if (isFromDecision && isYes) {
             // ===== YES path: exits RIGHT tip of diamond =====
@@ -1444,58 +1552,68 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             // ===== Same lane, going RIGHT =====
             const startX = fromPos.x + fromHalfW;
             const endX = toPos.x - toHalfW - GAP;
-            // Check if the straight line passes through any shape between them
-            if (hSegHits(fromPos.y, startX, endX, skip)) {
-              // Route above the shapes: up, across, down
+            const startY = fromPos.y + spread.fromOffset;
+            const endY = toPos.y + spread.toOffset;
+            if (hSegHits(startY, startX, endX, skip)) {
               const laneTop = laneYOffsets[fromLane] + GAP;
               const routeY = laneTop;
-              path = `M ${startX} ${fromPos.y} L ${startX} ${routeY} L ${endX} ${routeY} L ${endX} ${toPos.y}`;
+              path = `M ${startX} ${startY} L ${startX} ${routeY} L ${endX} ${routeY} L ${endX} ${endY}`;
             } else {
-              path = `M ${startX} ${fromPos.y} L ${endX} ${toPos.y}`;
+              path = `M ${startX} ${startY} L ${endX} ${endY}`;
             }
             labelX = (startX + endX) / 2;
-            labelY = fromPos.y - 10;
+            labelY = startY - 10;
 
           } else if (isSameLane && dx < 0) {
             // ===== Same lane, going LEFT (loopback) → route below =====
             const startX = fromPos.x - fromHalfW;
             const endX = toPos.x + toHalfW;
+            const startY = fromPos.y + spread.fromOffset;
+            const endY = toPos.y + spread.toOffset;
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
             let routeY = laneYOffsets[fromLaneIdx + 1] - 8;
             routeY += getHSpread(routeY, startX, endX);
-            path = `M ${startX} ${fromPos.y} L ${startX - GAP} ${fromPos.y} L ${startX - GAP} ${routeY} L ${endX + GAP} ${routeY} L ${endX + GAP} ${toPos.y} L ${endX} ${toPos.y}`;
+            path = `M ${startX} ${startY} L ${startX - GAP} ${startY} L ${startX - GAP} ${routeY} L ${endX + GAP} ${routeY} L ${endX + GAP} ${endY} L ${endX} ${endY}`;
             labelX = (startX + endX) / 2;
             labelY = routeY + 12;
 
           } else if (isSameColumn && dy > 0) {
             // ===== Same column, going DOWN =====
-            path = `M ${fromPos.x} ${fromPos.y + fromHalfH} L ${toPos.x} ${toPos.y - toHalfH - GAP}`;
-            labelX = fromPos.x + 15;
+            const startXd = fromPos.x + spread.fromOffset;
+            const toXd = toPos.x + spread.toOffset;
+            path = `M ${startXd} ${fromPos.y + fromHalfH} L ${toXd} ${toPos.y - toHalfH - GAP}`;
+            labelX = startXd + 15;
             labelY = (fromPos.y + fromHalfH + toPos.y - toHalfH) / 2;
 
           } else if (isSameColumn && dy < 0) {
             // ===== Same column, going UP =====
-            path = `M ${fromPos.x} ${fromPos.y - fromHalfH} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
-            labelX = fromPos.x + 15;
+            const startXu = fromPos.x + spread.fromOffset;
+            const toXu = toPos.x + spread.toOffset;
+            path = `M ${startXu} ${fromPos.y - fromHalfH} L ${toXu} ${toPos.y + toHalfH + GAP}`;
+            labelX = startXu + 15;
             labelY = (fromPos.y - fromHalfH + toPos.y + toHalfH) / 2;
 
           } else if (dx > 0) {
             // ===== Different lane, going RIGHT → elbow with shape avoidance =====
             const startX = fromPos.x + fromHalfW;
-            const midX = findClearVert((fromPos.x + toPos.x) / 2, fromPos.y, toPos.y, skip);
-            path = `M ${startX} ${fromPos.y} L ${midX} ${fromPos.y} L ${midX} ${toPos.y} L ${toPos.x - toHalfW - GAP} ${toPos.y}`;
+            const startY = fromPos.y + spread.fromOffset;
+            const endY = toPos.y + spread.toOffset;
+            const midX = findClearVert((fromPos.x + toPos.x) / 2, startY, endY, skip);
+            path = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${toPos.x - toHalfW - GAP} ${endY}`;
             labelX = midX + 8;
-            labelY = Math.min(fromPos.y, toPos.y) - 8;
+            labelY = Math.min(startY, endY) - 8;
 
           } else {
             // ===== Different lane, going LEFT (loopback across lanes) =====
+            const startXl = fromPos.x + spread.fromOffset;
+            const toXl = toPos.x + spread.toOffset;
             const startY = fromPos.y + fromHalfH;
             const fromLaneIdx = stepPositions[conn.from]?.laneIndex ?? 0;
             const toLaneIdx = stepPositions[conn.to]?.laneIndex ?? 0;
             const maxLaneIdx = Math.max(fromLaneIdx, toLaneIdx);
             let routeY = (laneYOffsets[maxLaneIdx + 1] || laneYOffsets[totalLanes]) - 8;
             routeY += getHSpread(routeY, fromPos.x, toPos.x);
-            path = `M ${fromPos.x} ${startY} L ${fromPos.x} ${routeY} L ${toPos.x} ${routeY} L ${toPos.x} ${toPos.y + toHalfH + GAP}`;
+            path = `M ${startXl} ${startY} L ${startXl} ${routeY} L ${toXl} ${routeY} L ${toXl} ${toPos.y + toHalfH + GAP}`;
             labelX = (fromPos.x + toPos.x) / 2;
             labelY = routeY - 8;
           }
@@ -1503,13 +1621,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           // Post-process: reroute any segment that passes through a shape
           path = avoidShapesInPath(path, skip);
 
-          // Use manual arrow overrides if available
-          const overridePoints = arrowOverrides[connKey];
+          // Use manual arrow overrides if available (virtual connections have none)
+          const overridePoints = isVirtual ? undefined : arrowOverrides[connKey];
           const finalPath = overridePoints ? buildPath(overridePoints) : path;
           const pathPoints = overridePoints || parsePath(path);
 
           // Styling
-          const isSelected = selectedArrow === connKey;
+          const isSelected = !isVirtual && selectedArrow === connKey;
           const strokeColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
           const markerEnd = isYes ? 'url(#arrowhead-green)' : isNo ? 'url(#arrowhead-red)' : 'url(#arrowhead)';
           const labelBgColor = isYes ? '#dcfce7' : isNo ? '#fee2e2' : 'white';
@@ -1531,10 +1649,11 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 d={finalPath}
                 fill="none"
                 stroke={strokeColor}
-                strokeWidth={isSelected ? "2.5" : "1.5"}
+                strokeWidth={isSelected ? "2.5" : "2"}
                 markerEnd={markerEnd}
               />
               {/* Wide transparent hitbox — drag immediately on first touch */}
+              {!isVirtual && (
               <path
                 d={finalPath}
                 fill="none"
@@ -1557,6 +1676,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   setPendingArrowDrag({ connKey, segmentIdx: bestSegIdx, pathPoints, startMouse: svgPt });
                 }}
               />
+              )}
               {/* Label */}
               {conn.label && (
                 <>
@@ -1584,7 +1704,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 </>
               )}
               {/* Waypoint handles — always visible at bend points */}
-              {pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
+              {!isVirtual && pathPoints.length > 2 && pathPoints.slice(1, -1).map((pt, i) => (
                 <circle
                   key={`wp-${connKey}-${i}`}
                   data-no-export="true"
@@ -1601,7 +1721,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   }}
                 />
               ))}
-              {/* Start endpoint handle — drag to reposition arrow tail */}
+              {/* Start / end endpoint handles and delete button — real connections only */}
+              {!isVirtual && (
               <circle
                 data-no-export="true"
                 cx={pathPoints[0].x} cy={pathPoints[0].y}
@@ -1610,7 +1731,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 style={{ cursor: 'grab' }}
                 onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, 0, pathPoints); }}
               />
-              {/* End endpoint handle — drag to reposition arrowhead */}
+              )}
+              {!isVirtual && (
               <circle
                 data-no-export="true"
                 cx={pathPoints[pathPoints.length - 1].x} cy={pathPoints[pathPoints.length - 1].y}
@@ -1619,8 +1741,9 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 style={{ cursor: 'grab' }}
                 onPointerDown={(e) => { e.stopPropagation(); handleWaypointPointerDown(e, connKey, pathPoints.length - 1, pathPoints); }}
               />
+              )}
               {/* Delete button when arrow is selected */}
-              {isSelected && (
+              {!isVirtual && isSelected && (
                 <g
                   data-no-export="true"
                   style={{ cursor: 'pointer' }}
@@ -1686,7 +1809,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             <g key={`ec-${idx}`}>
               <path d={path} fill="none" stroke="white" strokeWidth="5" />
               {isSelected && <path d={path} fill="none" stroke="#3b82f6" strokeWidth="5" strokeOpacity="0.3" />}
-              <path d={path} fill="none" stroke={strokeColor} strokeWidth={isSelected ? "2.5" : "1.5"} markerEnd={markerEnd} />
+              <path d={path} fill="none" stroke={strokeColor} strokeWidth={isSelected ? "2.5" : "2"} markerEnd={markerEnd} />
               <path d={path} fill="none" stroke="transparent" strokeWidth="16" style={{ cursor: 'grab' }}
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => {
@@ -1989,7 +2112,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             <ellipse cx="462" cy="10" rx="4" ry="8" fill="white" stroke="#1f2937" strokeWidth="1.2" />
             <ellipse cx="452" cy="10" rx="4" ry="8" fill="white" stroke="#1f2937" strokeWidth="1.2" />
           </g>
-          <text x="472" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">System</text>
+          <text x="472" y="14" fontSize="10" fill="#6b7280" fontFamily="Arial">Database</text>
         </g>
       </svg>
       </div>

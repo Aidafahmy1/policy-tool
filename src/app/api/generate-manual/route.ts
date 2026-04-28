@@ -69,7 +69,7 @@ function extractStepsFromSwimlane(swimlaneData: any): {
     const currentStep = stepMap[currentId];
     if (currentStep && currentStep.type === 'document') {
       documentLabels.add(currentStep.label);
-    } else if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end') {
+    } else if (currentStep) {
       stepIdToNum[currentId] = stepNum;
       stepIdToLane[currentId] = laneMap[currentId];
       steps.push({
@@ -100,7 +100,7 @@ function extractStepsFromSwimlane(swimlaneData: any): {
   for (const step of allStepsList) {
     if (step.type === 'document' && !documentLabels.has(step.label)) {
       documentLabels.add(step.label);
-    } else if (step.type !== 'start' && step.type !== 'end' && step.type !== 'document' && !stepIdToNum[step.id]) {
+    } else if (step.type !== 'document' && !stepIdToNum[step.id]) {
       stepIdToNum[step.id] = stepNum;
       stepIdToLane[step.id] = laneMap[step.id];
       steps.push({
@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
       const systemPrompt = `You are an expert business process consultant. You will receive a pre-built JSON skeleton for a process manual. The stepNumber, stepName, responsible, inputs, and outputs fields are ALREADY CORRECT and LOCKED — do NOT change them.
 
 Your ONLY job is to fill in the fields marked "__FILL__":
-- "description": A detailed 1-3 sentence description of what happens in this step. For decision steps, you MUST state: "If Yes, the process proceeds to Step [N]. If No, the process returns/goes to Step [N]." with the correct step numbers from the connections list.
+- "description": A detailed 1-3 sentence description of what happens in this step. For "start" type steps, describe what triggers or initiates the process. For "end" type steps, describe the final outcome or completion state. For decision steps, you MUST state: "If Yes, the process proceeds to Step [N]. If No, the process returns/goes to Step [N]." with the correct step numbers from the connections list.
 - "accountable": The most senior role who oversees/approves this step. Use one of the stakeholder names or an org structure role.
 - "consulted": Roles who provide input before this step, or "-" if none.
 - "informed": Roles notified after this step, or "-" if none.

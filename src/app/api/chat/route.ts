@@ -19,12 +19,12 @@ CRITICAL: You must generate TWO code blocks:
 2. A \`\`\`swimlane-json block with structured data for proper Visio-style rendering
 
 Shape types:
-- start: Rounded pill shape for process start
-- end: Rounded pill shape for process end  
+- start: Rounded pill shape for process start — label must describe the TRIGGERING EVENT (e.g. "Purchase Request Submitted", "Customer Order Received", "Invoice Arrives"). NEVER use the generic word "Start" as a label.
+- end: Rounded pill shape for process end — label must describe the FINAL OUTCOME (e.g. "Payment Completed", "Order Fulfilled", "Contract Signed"). NEVER use the generic word "End" as a label.
 - process: Rectangle for process steps
 - decision: Diamond for Yes/No decisions
 - document: Document shape for inputs/outputs
-- system: Cylinder shape for any system/application activity (ERP, CRM, database, IT system, software platform). Use this whenever a step involves interacting with a system — e.g., "Enter PO in SAP", "Update CRM Record", "Log in ERP", "System Validates Data"
+- database: Cylinder shape for any system/application or database activity (ERP, CRM, database, IT system, software platform). Use this whenever a step involves interacting with a system — e.g., "Enter PO in SAP", "Update CRM Record", "Log in ERP", "System Validates Data"
 
 Example output format:
 
@@ -51,7 +51,7 @@ flowchart LR
     {
       "name": "Requestor",
       "steps": [
-        {"id": "A", "label": "Start", "type": "start", "x": 0},
+        {"id": "A", "label": "Request Submitted", "type": "start", "x": 0},
         {"id": "B", "label": "Create Request", "type": "process", "x": 1}
       ]
     },
@@ -67,7 +67,7 @@ flowchart LR
       "name": "Finance",
       "steps": [
         {"id": "F", "label": "Complete Payment", "type": "process", "x": 4},
-        {"id": "G", "label": "End", "type": "end", "x": 5}
+        {"id": "G", "label": "Payment Completed", "type": "end", "x": 5}
       ]
     }
   ],
@@ -95,11 +95,12 @@ Key rules:
 DECISION POINT RULES (CRITICAL):
 - Every decision (diamond) MUST have exactly TWO outgoing connections: one labeled "Yes" and one labeled "No"
 - Both "Yes" and "No" paths MUST lead to a clear activity/process shape (rectangle) — NEVER to another decision directly
+- SAME-LANE RULE (CRITICAL): A decision diamond MUST be placed in the SAME swimlane as the activity that DIRECTLY precedes it and triggers the question. The decision asks a question about THAT activity's outcome. Example: if "Manager Reviews Budget" is in the Manager lane, the decision "Budget Approved?" must ALSO be in the Manager lane at x+1. NEVER put the decision in a different lane from the activity that feeds it.
 - The "Yes" path continues the MAIN flow → goes to the next process step at x+1 in the same lane (rightward continuation)
 - The "No" path MUST lead to a NEW, DISTINCT activity/process step that describes what happens when the answer is No (e.g., "Revise Request", "Escalate Issue", "Rework Document", "Notify Rejection")
 - The "No" path must NEVER loop back to the SAME decision shape. It must always go to a different process/activity step first.
 - PLACEMENT OF THE "No" TARGET: Place the "No" activity at the SAME x position as the decision but in a DIFFERENT lane (the lane below the decision). This creates a clean straight-down arrow from the decision's bottom tip to the "No" activity directly below it.
-- Example: Decision "Approved?" at x:3, lane "Manager" → "Yes" goes to "Process Order" at x:4 in "Manager" lane → "No" goes to "Revise Request" at x:3 in "Employee" lane (directly below). "Revise Request" then connects forward to the appropriate next step.
+- Example: "Manager Reviews Budget" at x:3 in "Manager" lane → "Budget Approved?" decision at x:4 in "Manager" lane (same lane as the review activity) → "Yes" goes to "Release Funds" at x:5 in "Manager" lane → "No" goes to "Revise Budget" at x:4 in "Finance" lane (directly below).
 - If the "No" activity needs rework, connect it to an earlier process step (NOT back to the decision)
 - NEVER leave decision connections without "Yes"/"No" labels
 - Decision "Yes" and "No" paths must NEVER connect to a document shape. They must ALWAYS connect to a process/activity rectangle.
@@ -107,22 +108,25 @@ DECISION POINT RULES (CRITICAL):
 DOCUMENT SHAPE RULES (CRITICAL — READ CAREFULLY):
 - ALWAYS include relevant input and output documents in the FIRST flowchart generation. Do NOT wait for the user to ask for documents separately. If a process step naturally produces or requires a document (e.g., Purchase Order, Invoice, Approval Form, Contract, Report, etc.), include it as a document shape from the start.
 - Documents are SIDE-ATTACHED to process/activity shapes. They are NOT part of the main process flow chain.
-- The MAIN FLOW CHAIN must ONLY consist of process (rectangle), decision (diamond), start (oval), and end (oval) shapes connected in sequence. Documents are NEVER in this chain.
+- The MAIN FLOW CHAIN must ONLY consist of process (rectangle), decision (diamond), database (cylinder), start (oval), and end (oval) shapes connected in sequence. Documents are NEVER in this chain.
 - A document has exactly ONE connection: either FROM a process step (output document) or TO a process step (input document). A document NEVER connects to another document or to a decision.
 - OUTPUT DOCUMENT: Process step → Document (the process produces this document). The document is a dead-end — nothing flows out of it.
 - INPUT DOCUMENT: Document → Process step (the process requires this document). The document is a dead-end source — nothing flows into it.
 - CONNECTIONS STRUCTURE: The main flow goes Process A → Process B → Decision → Process C etc. Separately, Process A → "Invoice" (output doc), and "Purchase Order" → Process B (input doc). The documents branch off the main chain, they do NOT sit between two process steps.
-- NEVER chain: Process → Document → Process. This is WRONG. The document must be a leaf node (dead-end) attached to one process step only.
+- ❌ WRONG: Process A → Document → Process B  (document has 2 connections — it is an intermediate node — THIS IS FORBIDDEN)
+- ✅ CORRECT: Process A → Process B (flow), PLUS Process A → Document (dead-end side attachment, only 1 connection total on the document)
+- NEVER chain: Process → Document → Process. The document must be a leaf node (dead-end) attached to ONE process step only. Count the connections on every document shape before finalising — if any document has more than 1 connection, you have made an error.
+- Arrows must NEVER enter OR exit a document as part of the main flow. The arrow from activity A to activity B must connect A directly to B, NOT go via any document.
 - Place documents in the SAME LANE as the department/role that creates or issues them — documents do NOT get their own separate swimlane
 - Place the document at the SAME x position as its associated process step so the connection is short and clear
 - Documents do NOT get step numbers — they are supplementary to the flow
 - NEVER create a dedicated swimlane just for documents
 
-SYSTEM SHAPE RULES:
-- Use the "system" type (cylinder shape) whenever a process step involves interacting with an IT system, ERP, CRM, database, or any software application.
+DATABASE SHAPE RULES:
+- Use the "database" type (cylinder shape) whenever a process step involves interacting with an IT system, ERP, CRM, database, or any software application.
 - Examples: "Enter PO in SAP", "Update CRM", "System Auto-validates", "Record in ERP", "Generate Report from BI System"
-- System shapes ARE part of the main flow chain (unlike documents). They represent an action performed on/by a system.
-- System shapes get step numbers like process shapes.
+- Database shapes ARE part of the main flow chain (unlike documents). They represent an action performed on/by a system.
+- Database shapes get step numbers like process shapes.
 - Place them in the lane of the person/role performing the system action.
 
 If the user uploads context documents (ERP data, org structure), incorporate that information into the process design.

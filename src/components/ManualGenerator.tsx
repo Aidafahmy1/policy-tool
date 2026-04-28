@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import ManualPreview from '@/components/ManualPreview';
 import { supabase, Message, Attachment } from '@/lib/supabase';
 import { Packer } from 'docx';
 import { generateManualDocument, ManualData } from '@/lib/generateDocx';
@@ -13,7 +14,7 @@ interface SwimlaneDataType {
     steps: Array<{
       id: string;
       label: string;
-      type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess' | 'system';
+      type: 'start' | 'end' | 'process' | 'decision' | 'document' | 'subprocess' | 'system' | 'database';
       x: number;
     }>;
   }>;
@@ -84,7 +85,7 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
   while (queue.length > 0) {
     const currentId = queue.shift()!;
     const currentStep = allSteps.find(s => s.id === currentId);
-    if (currentStep && currentStep.type !== 'start' && currentStep.type !== 'end' && currentStep.type !== 'document') {
+    if (currentStep && currentStep.type !== 'document') {
       stepNumbers[currentStep.id] = stepNum++;
     }
     const neighbors = (adj[currentId] || [])
@@ -100,7 +101,7 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
     }
   }
   for (const step of allSteps) {
-    if (step.type !== 'start' && step.type !== 'end' && step.type !== 'document' && !stepNumbers[step.id]) {
+    if (step.type !== 'document' && !stepNumbers[step.id]) {
       stepNumbers[step.id] = stepNum++;
     }
   }
@@ -279,6 +280,10 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
       if (step.type === 'start' || step.type === 'end') {
         svg += `<rect x="${cx - halfW}" y="${cy - halfH}" width="${SHAPE_WIDTH}" height="${SHAPE_HEIGHT}" rx="${SHAPE_HEIGHT / 2}" fill="#047857" stroke="#065f46" stroke-width="1"/>`;
         svg += `<text x="${cx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="11" font-family="Arial, sans-serif" font-weight="600">${escapedLabel}</text>`;
+        if (num) {
+          svg += `<circle cx="${cx - halfW + 10}" cy="${cy - halfH + 10}" r="8" fill="#047857" stroke="white" stroke-width="1.5"/>`;
+          svg += `<text x="${cx - halfW + 10}" y="${cy - halfH + 13}" text-anchor="middle" fill="white" font-size="7" font-family="Arial, sans-serif" font-weight="700">${num}</text>`;
+        }
       } else if (step.type === 'decision') {
         const hd = DECISION_SIZE / 2;
         svg += `<polygon points="${cx},${cy - hd} ${cx + hd},${cy} ${cx},${cy + hd} ${cx - hd},${cy}" fill="#059669" stroke="#047857" stroke-width="1.5"/>`;
@@ -287,7 +292,7 @@ function generateSVGString(data: SwimlaneDataType): { svg: string; width: number
           svg += `<circle cx="${cx - hd + 10}" cy="${cy - hd + 10}" r="8" fill="#047857" stroke="white" stroke-width="1.5"/>`;
           svg += `<text x="${cx - hd + 10}" y="${cy - hd + 13}" text-anchor="middle" fill="white" font-size="7" font-family="Arial, sans-serif" font-weight="700">${num}</text>`;
         }
-      } else if (step.type === 'system') {
+      } else if (step.type === 'system' || step.type === 'database') {
         const sHW = SHAPE_WIDTH / 2;
         const sHH = SHAPE_HEIGHT / 2;
         const erx = 14;
@@ -372,6 +377,7 @@ export default function ManualGenerator({
   const [showOrgInput, setShowOrgInput] = useState(false);
   const [customInstructions, setCustomInstructions] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState<'manual' | 'policy' | null>(null);
 
   const handleGenerateManual = async () => {
     // Check if we have an uploaded image OR a conversation diagram
@@ -495,6 +501,7 @@ export default function ManualGenerator({
         }
 
         setManualData(manualResult);
+        setShowPreview('manual');
       } else if (hasUploadedImage) {
         // Fallback: no structured data, use image-reading AI
         const response = await fetch('/api/generate-manual-from-image', {
@@ -517,6 +524,7 @@ export default function ManualGenerator({
         }
 
         setManualData(data.manual);
+        setShowPreview('manual');
       }
     } catch (err) {
       console.error('Error generating manual:', err);
@@ -649,6 +657,7 @@ export default function ManualGenerator({
       }
 
       setPolicyData(data.policy);
+      setShowPreview('policy');
     } catch (err) {
       console.error('Error generating policy:', err);
       setError('Failed to generate policy document');
@@ -822,62 +831,95 @@ export default function ManualGenerator({
         </div>
       )}
 
-      {/* Manual Preview */}
+      {/* Manual ready */}
       {manualData && (
-        <div className="mt-4 space-y-4">
-          <div className="p-4 bg-gray-50 rounded-lg max-h-64 overflow-y-auto">
-            <h4 className="font-semibold text-emerald-700 mb-2">
-              {manualData.processName}
-            </h4>
-            <p className="text-sm text-gray-600 mb-2">
-              <strong>Objectives:</strong> {manualData.processObjectives || manualData.processOverview?.purpose || ''}
+        <div className="mt-4 space-y-3">
+          <div className="p-4 bg-gray-50 rounded-lg">
+            <h4 className="font-semibold text-emerald-700 mb-2">{manualData.processName}</h4>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>Objectives:</strong> {manualData.processObjectives || (manualData as any).processOverview?.purpose || '—'}
             </p>
-            <p className="text-sm text-gray-600 mb-2">
+            <p className="text-sm text-gray-600 mb-1">
               <strong>Stakeholders:</strong>{' '}
-              {Array.isArray(manualData.stakeholders) 
+              {Array.isArray(manualData.stakeholders)
                 ? manualData.stakeholders.map((s: string | { role: string }) => typeof s === 'string' ? s : s.role).join(', ')
-                : ''}
+                : '—'}
             </p>
             <p className="text-sm text-gray-600">
-              <strong>Steps:</strong> {manualData.processSteps.length} process
-              steps with RACI assignments
+              <strong>Steps:</strong> {manualData.processSteps.length} process steps with RACI assignments
             </p>
           </div>
-
+          <div className="flex gap-2">
+          <button
+            onClick={() => setShowPreview('manual')}
+            className="flex-1 px-4 py-2 bg-emerald-50 border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-100 flex items-center justify-center gap-2 text-sm font-medium"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+            Preview Manual
+          </button>
           <button
             onClick={handleDownloadDocx}
-            className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 text-sm font-medium"
           >
-            📥 Download Process Manual
+            📥 Download .docx
           </button>
+          </div>
         </div>
       )}
 
-      {/* Policy Preview */}
+      {/* Policy ready */}
       {policyData && (
-        <div className="mt-4 space-y-4">
-          <div className="p-4 bg-blue-50 rounded-lg max-h-64 overflow-y-auto">
-            <h4 className="font-semibold text-blue-700 mb-2">
-              {policyData.policyName}
-            </h4>
-            <p className="text-sm text-gray-600 mb-2">
+        <div className="mt-4 space-y-3">
+          <div className="p-4 bg-blue-50 rounded-lg">
+            <h4 className="font-semibold text-blue-700 mb-2">{policyData.policyName}</h4>
+            <p className="text-sm text-gray-600 mb-1">
               <strong>Purpose:</strong> {policyData.purpose?.substring(0, 200)}{policyData.purpose?.length > 200 ? '...' : ''}
             </p>
-            <p className="text-sm text-gray-600 mb-2">
+            <p className="text-sm text-gray-600 mb-1">
               <strong>Scope:</strong> {policyData.scope?.substring(0, 200)}{policyData.scope?.length > 200 ? '...' : ''}
             </p>
             <p className="text-sm text-gray-600">
               <strong>Sections:</strong> {policyData.sections?.length || 0} policy sections
             </p>
           </div>
-
+          <div className="flex gap-2">
+          <button
+            onClick={() => setShowPreview('policy')}
+            className="flex-1 px-4 py-2 bg-blue-50 border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-2 text-sm font-medium"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+            Preview Policy
+          </button>
           <button
             onClick={handleDownloadPolicyDocx}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 text-sm font-medium"
           >
-            📥 Download Policy Document
+            📥 Download .docx
           </button>
+          </div>
         </div>
+      )}
+
+      {/* Full preview modal */}
+      {showPreview === 'manual' && manualData && (
+        <ManualPreview
+          manualData={manualData}
+          onClose={() => setShowPreview(null)}
+          onDownloadManual={handleDownloadDocx}
+        />
+      )}
+      {showPreview === 'policy' && policyData && (
+        <ManualPreview
+          policyData={policyData}
+          onClose={() => setShowPreview(null)}
+          onDownloadPolicy={handleDownloadPolicyDocx}
+        />
       )}
     </div>
   );
