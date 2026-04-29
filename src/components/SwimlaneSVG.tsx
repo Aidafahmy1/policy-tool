@@ -1757,9 +1757,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const overridePoints = isVirtual ? undefined : arrowOverrides[connKey];
           let adjustedOverride = overridePoints;
           if (overridePoints && overridePoints.length >= 2) {
-            const newStart = exitEdge(fromPos, toPos, fromHalfW, fromHalfH);
-            const newEnd   = entryEdge(toPos, fromPos, toHalfW, toHalfH);
-            adjustedOverride = [newStart, ...overridePoints.slice(1, -1), newEnd];
+            // Keep user-dragged endpoint positions; endpoints are freely movable
+            adjustedOverride = [...overridePoints];
           }
           const finalPath = adjustedOverride ? buildPath(adjustedOverride) : path;
           const pathPoints = adjustedOverride || parsePath(path);
@@ -1921,10 +1920,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const toDims    = getShapeDims(toShape?.type   ?? 'process');
           let adjustedExtraOverride: {x:number;y:number}[] | undefined;
           if (overridePoints && overridePoints.length >= 2) {
-            // Re-snap endpoints to current shape edges so the arrow follows the shape
-            const newStart = exitEdge(fromPos, toPos, fromDims.w / 2, fromDims.h / 2);
-            const newEnd   = entryEdge(toPos, fromPos, toDims.w / 2, toDims.h / 2);
-            adjustedExtraOverride = [newStart, ...overridePoints.slice(1, -1), newEnd];
+            // Keep user-dragged endpoint positions; endpoints are freely movable
+            adjustedExtraOverride = [...overridePoints];
             path = buildPath(adjustedExtraOverride);
           } else {
             // Edge-snap fresh path (no override)

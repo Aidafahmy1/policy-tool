@@ -741,7 +741,7 @@ export default function ManualGenerator({
 • Add detailed descriptions for certain steps
 • Specify particular stakeholder responsibilities
 • Request specific formatting or sections"
-          className="w-full h-28 p-3 text-sm text-gray-900 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 placeholder:text-gray-400"
+          className="w-full h-28 p-3 text-sm text-gray-900 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-[#2EAD6D] focus:border-[#2EAD6D] placeholder:text-gray-400"
         />
       </div>
 
@@ -749,7 +749,7 @@ export default function ManualGenerator({
       <div className="mb-4">
         <button
           onClick={() => setShowOrgInput(!showOrgInput)}
-          className="text-sm text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+          className="text-sm flex items-center gap-1" style={{ color: '#2EAD6D' }}
         >
           {showOrgInput ? '▼' : '▶'} Add Organization Structure (Optional)
         </button>
@@ -798,7 +798,8 @@ export default function ManualGenerator({
         <button
           onClick={handleGenerateManual}
           disabled={isGenerating || isGeneratingPolicy}
-          className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex-1 px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          style={{ background: '#0C3B2E' }}
         >
           {isGenerating ? (
             <>
@@ -835,7 +836,7 @@ export default function ManualGenerator({
       {manualData && (
         <div className="mt-4 space-y-3">
           <div className="p-4 bg-gray-50 rounded-lg">
-            <h4 className="font-semibold text-emerald-700 mb-2">{manualData.processName}</h4>
+            <h4 className="font-semibold mb-2" style={{ color: '#0C3B2E' }}>{manualData.processName}</h4>
             <p className="text-sm text-gray-600 mb-1">
               <strong>Objectives:</strong> {manualData.processObjectives || (manualData as any).processOverview?.purpose || '—'}
             </p>
@@ -852,7 +853,8 @@ export default function ManualGenerator({
           <div className="flex gap-2">
           <button
             onClick={() => setShowPreview('manual')}
-            className="flex-1 px-4 py-2 bg-emerald-50 border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-100 flex items-center justify-center gap-2 text-sm font-medium"
+            className="flex-1 px-4 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-medium"
+            style={{ background: '#E8F5EE', border: '1px solid #B8E0CC', color: '#0C3B2E' }}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -862,7 +864,8 @@ export default function ManualGenerator({
           </button>
           <button
             onClick={handleDownloadDocx}
-            className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 text-sm font-medium"
+            className="flex-1 px-4 py-2 text-white rounded-lg flex items-center justify-center gap-2 text-sm font-medium"
+            style={{ background: '#0C3B2E' }}
           >
             📥 Download .docx
           </button>

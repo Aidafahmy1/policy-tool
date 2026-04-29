@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Process Tool - Process Visio & Manual Generator",
-  description: "Generate process diagrams and manuals with AI assistance",
+  title: "Logic Consulting - Process Visio & Manual Generator",
+  description: "Generate process diagrams and manuals with AI assistance | Logic Consulting",
 };
 
 export default function RootLayout({

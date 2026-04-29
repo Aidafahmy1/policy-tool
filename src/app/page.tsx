@@ -377,10 +377,10 @@ export default function Home() {
         style={{ width: isSidebarCollapsed ? '52px' : '256px' }}
       >
         {isSidebarCollapsed ? (
-          <div className="flex flex-col items-center pt-4 gap-3 bg-gray-900 h-full">
+          <div className="flex flex-col items-center pt-4 gap-3 h-full" style={{ background: '#0C3B2E' }}>
             <button
               onClick={() => setIsSidebarCollapsed(false)}
-              className="w-9 h-9 flex items-center justify-center rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-white shadow" style={{ background: '#2EAD6D' }}
               title="Open sidebar"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -415,7 +415,8 @@ export default function Home() {
             <div className="flex flex-col items-center pt-4 gap-3">
               <button
                 onClick={() => setIsChatCollapsed(false)}
-                className="w-9 h-9 flex items-center justify-center rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow"
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-white shadow"
+                style={{ background: '#0C3B2E' }}
                 title="Open chat"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -487,11 +488,11 @@ export default function Home() {
                   <span className="text-xs text-gray-500">Client</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-300 rounded-lg hover:border-emerald-400 hover:bg-emerald-50 transition-colors">
-                  <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-300 rounded-lg hover:border-[#2EAD6D] hover:bg-[#E8F5EE] transition-colors">
+                  <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-[#2EAD6D]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  <span className="text-xs text-gray-500 group-hover:text-emerald-600">Client logo</span>
+                  <span className="text-xs text-gray-500 group-hover:text-[#0C3B2E]">Client logo</span>
                 </div>
               )}
               <input type="file" accept="image/*" className="hidden" onChange={(e) => {
@@ -517,9 +518,9 @@ export default function Home() {
                   <img src={companyLogo} alt="Company logo" className="h-7 max-w-[90px] object-contain rounded border border-gray-200 bg-white p-0.5" />
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-300 rounded-lg hover:border-emerald-400 hover:bg-emerald-50 transition-colors">
-                  <span className="text-xs text-gray-500 group-hover:text-emerald-600">Logic logo</span>
-                  <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-300 rounded-lg hover:border-[#2EAD6D] hover:bg-[#E8F5EE] transition-colors">
+                  <span className="text-xs text-gray-500 group-hover:text-[#0C3B2E]">Logic logo</span>
+                  <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-[#2EAD6D]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                 </div>
@@ -543,7 +544,7 @@ export default function Home() {
               {hasDiagram && (
                 <>
                   {processName && (
-                    <div className="absolute top-2 left-2 z-10 bg-emerald-100 text-emerald-800 px-3 py-1 rounded-lg text-sm font-medium">
+                    <div className="absolute top-2 left-2 z-10 px-3 py-1 rounded-lg text-sm font-medium" style={{ background: '#E8F5EE', color: '#0C3B2E' }}>
                       {processName}
                     </div>
                   )}
@@ -590,7 +591,8 @@ export default function Home() {
                     {/* Full View Button */}
                     <button
                       onClick={() => setIsExpanded(true)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
+                      className="text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
+                      style={{ background: '#0C3B2E' }}
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />

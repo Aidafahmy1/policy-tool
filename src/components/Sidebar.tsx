@@ -48,11 +48,11 @@ export default function Sidebar({ currentConversationId, onSelectConversation, o
   }, [currentConversationId]);
 
   return (
-    <div className="w-64 bg-gray-900 text-white flex flex-col h-full">
-      <div className="p-4 border-b border-gray-700 flex items-start justify-between">
+    <div className="w-64 text-white flex flex-col h-full" style={{ background: '#0C3B2E' }}>
+      <div className="p-4 border-b border-white/15 flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-bold text-emerald-400">Process Tool</h1>
-          <p className="text-xs text-gray-400 mt-1">Process Diagram Generator</p>
+          <img src="/logic-logo.png" alt="Logic Consulting" className="h-14 w-48 rounded bg-white px-1 py-0 object-cover mb-1" />
+          <p className="text-xs text-white/50 mt-1">Process Visio & Manual Generator</p>
         </div>
         {onCollapse && (
           <button
@@ -69,7 +69,10 @@ export default function Sidebar({ currentConversationId, onSelectConversation, o
 
       <button
         onClick={handleNewChat}
-        className="mx-4 mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm font-medium transition-colors"
+        className="mx-4 mt-4 px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white"
+        style={{ background: '#2EAD6D' }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = '#259A5E')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = '#2EAD6D')}
       >
         + New Process
       </button>
@@ -89,8 +92,8 @@ export default function Sidebar({ currentConversationId, onSelectConversation, o
               onClick={() => onSelectConversation(conv.id)}
               className={`mx-2 px-3 py-2 rounded-lg cursor-pointer flex items-center justify-between group ${
                 currentConversationId === conv.id
-                  ? 'bg-gray-700'
-                  : 'hover:bg-gray-800'
+                  ? 'bg-white/15'
+                  : 'hover:bg-white/10'
               }`}
             >
               <span className="text-sm truncate flex-1">{conv.title}</span>
@@ -105,8 +108,8 @@ export default function Sidebar({ currentConversationId, onSelectConversation, o
         )}
       </div>
 
-      <div className="p-4 border-t border-gray-700 text-xs text-gray-500">
-        Powered by Claude AI
+      <div className="p-4 border-t border-white/15 text-xs text-white/40">
+        Powered by Claude AI | Logic Consulting
       </div>
     </div>
   );
