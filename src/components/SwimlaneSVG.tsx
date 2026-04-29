@@ -120,7 +120,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       numberOverrides: Record<string, number|null>;
       deletedConnections: Set<string>;
       deletedShapes: Set<string>;
-      extraShapes: Array<{id:string;label:string;type:string;x:number;y:number;stepNumber?:number}>;
+      extraShapes: Array<{id:string;label:string;type:ProcessStep['type'];x:number;y:number;stepNumber?:number}>;
       extraConnections: Array<{from:string;to:string;label?:string}>;
       extraLanes: Array<{id:string;name:string}>;
       laneNameOverrides: Record<string,string>;
@@ -194,7 +194,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setNumberOverrides(snap.numberOverrides);
       setDeletedConnections(snap.deletedConnections);
       setDeletedShapes(snap.deletedShapes);
-      setExtraShapes(snap.extraShapes);
+      setExtraShapes(snap.extraShapes as typeof extraShapes);
       setExtraConnections(snap.extraConnections);
       setExtraLanes(snap.extraLanes);
       setLaneNameOverrides(snap.laneNameOverrides);
