@@ -276,10 +276,12 @@ export default function Home() {
 
     // If logos present (PDF only), add a white bar above the SVG content
     if (withLogos && (clientLogo || companyLogo)) {
-      const LOGO_BAR_H = 70;
+      const LOGO_BAR_H = 90;
       const LOGO_PAD = 16;
-      const LOGO_MAX_W = 160;
+      const LOGO_MAX_W = 180;
       const LOGO_MAX_H = LOGO_BAR_H - LOGO_PAD * 2;
+      const COMPANY_LOGO_MAX_W = 240;
+      const COMPANY_LOGO_MAX_H = LOGO_MAX_H;
 
       // Create a taller canvas: logo bar + original SVG
       const tallCanvas = document.createElement('canvas');
@@ -301,14 +303,15 @@ export default function Home() {
       tctx.stroke();
 
       // Copy original SVG canvas below the logo bar
-      tctx.drawImage(canvas, 0, LOGO_BAR_H);
+      // Use 9-arg drawImage to map the high-res source into CSS coords correctly
+      tctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, LOGO_BAR_H, width, height);
 
       // Draw logos in the white bar
       if (clientLogo) {
         await drawLogoOnCanvas(tctx, clientLogo, LOGO_PAD, LOGO_PAD, LOGO_MAX_W, LOGO_MAX_H, 'left');
       }
       if (companyLogo) {
-        await drawLogoOnCanvas(tctx, companyLogo, width - LOGO_PAD, LOGO_PAD, LOGO_MAX_W, LOGO_MAX_H, 'right');
+        await drawLogoOnCanvas(tctx, companyLogo, width - LOGO_PAD, LOGO_PAD, COMPANY_LOGO_MAX_W, COMPANY_LOGO_MAX_H, 'right');
       }
 
       return { canvas: tallCanvas, width, height: height + LOGO_BAR_H };
