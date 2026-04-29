@@ -37,6 +37,7 @@ export interface DiagramEditState {
   extraConnections: Array<{ from: string; to: string; label?: string }>;
   extraLanes: Array<{ id: string; name: string }>;
   laneNameOverrides?: Record<string, string>;
+  typeOverrides?: Record<string, string>;
 }
 
 interface SwimlaneSVGProps {
@@ -63,6 +64,9 @@ const ARROW_GAP = 14; // min gap between arrow and shape edge
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
   ({ data, onLayoutChange, onSaveVersion, onToggleHistory, restoredEditState, showHistoryActive }, ref) => {
     const svgRef = useRef<SVGSVGElement | null>(null);
+    // Unique prefix for all SVG IDs in this instance — prevents conflicts when
+    // two SwimlaneSVG components are mounted at the same time (e.g. normal + expanded).
+    const uid = useRef(`s${Math.random().toString(36).slice(2, 7)}`).current;
 
     // Combine forwarded ref with internal ref
     const combinedRef = useCallback((node: SVGSVGElement | null) => {
@@ -101,9 +105,35 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     const [editLaneText, setEditLaneText] = useState('');
     const laneEditInputRef = useRef<HTMLInputElement | null>(null);
     const [laneNameOverrides, setLaneNameOverrides] = useState<Record<string, string>>({});
+    const [typeOverrides, setTypeOverrides] = useState<Record<string, string>>({});
     const [addMode, setAddMode] = useState<'process' | 'decision' | 'document' | 'subprocess' | 'system' | 'arrow' | null>(null);
     const [arrowStart, setArrowStart] = useState<string | null>(null);
     const extraIdCounter = useRef(0);
+
+    // ── Undo stack ──────────────────────────────────────────────────────────────
+    // Captures a deep-copy of all editable state before each mutation so Cmd+Z
+    // can restore the previous state without a full diagram reset.
+    type UndoSnap = {
+      posOffsets: Record<string, {dx:number,dy:number}>;
+      arrowOverrides: Record<string, {x:number,y:number}[]>;
+      labelOverrides: Record<string, string>;
+      numberOverrides: Record<string, number|null>;
+      deletedConnections: Set<string>;
+      deletedShapes: Set<string>;
+      extraShapes: Array<{id:string;label:string;type:string;x:number;y:number;stepNumber?:number}>;
+      extraConnections: Array<{from:string;to:string;label?:string}>;
+      extraLanes: Array<{id:string;name:string}>;
+      laneNameOverrides: Record<string,string>;
+      typeOverrides: Record<string,string>;
+    };
+    const undoStack = useRef<UndoSnap[]>([]);
+    const [undoCount, setUndoCount] = useState(0);
+    // Always-fresh ref so pushUndo never needs to list every state in its deps
+    const _snapRef = useRef<UndoSnap>({
+      posOffsets: {}, arrowOverrides: {}, labelOverrides: {}, numberOverrides: {},
+      deletedConnections: new Set(), deletedShapes: new Set(),
+      extraShapes: [], extraConnections: [], extraLanes: [], laneNameOverrides: {}, typeOverrides: {},
+    });
     const [dragInfo, setDragInfo] = useState<{
       type: 'shape';
       stepId: string;
@@ -124,12 +154,62 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       startMouse: {x: number, y: number};
     } | null>(null);
 
+    // Keep _snapRef always current so pushUndo reads fresh state
+    useEffect(() => {
+      _snapRef.current = {
+        posOffsets, arrowOverrides, labelOverrides, numberOverrides,
+        deletedConnections, deletedShapes, extraShapes, extraConnections,
+        extraLanes, laneNameOverrides, typeOverrides,
+      };
+    }, [posOffsets, arrowOverrides, labelOverrides, numberOverrides,
+        deletedConnections, deletedShapes, extraShapes, extraConnections,
+        extraLanes, laneNameOverrides, typeOverrides]);
+
+    const pushUndo = useCallback(() => {
+      const s = _snapRef.current;
+      undoStack.current.push({
+        posOffsets: { ...s.posOffsets },
+        arrowOverrides: Object.fromEntries(Object.entries(s.arrowOverrides).map(([k,v])=>[k,v.map(p=>({...p}))])),
+        labelOverrides: { ...s.labelOverrides },
+        numberOverrides: { ...s.numberOverrides },
+        deletedConnections: new Set(s.deletedConnections),
+        deletedShapes: new Set(s.deletedShapes),
+        extraShapes: s.extraShapes.map(sh=>({...sh})),
+        extraConnections: s.extraConnections.map(c=>({...c})),
+        extraLanes: s.extraLanes.map(l=>({...l})),
+        laneNameOverrides: { ...s.laneNameOverrides },
+        typeOverrides: { ...s.typeOverrides },
+      });
+      if (undoStack.current.length > 50) undoStack.current.shift();
+      setUndoCount(undoStack.current.length);
+    }, []);
+
+    const performUndo = useCallback(() => {
+      const snap = undoStack.current.pop();
+      setUndoCount(undoStack.current.length);
+      if (!snap) return;
+      setPosOffsets(snap.posOffsets);
+      setArrowOverrides(snap.arrowOverrides);
+      setLabelOverrides(snap.labelOverrides);
+      setNumberOverrides(snap.numberOverrides);
+      setDeletedConnections(snap.deletedConnections);
+      setDeletedShapes(snap.deletedShapes);
+      setExtraShapes(snap.extraShapes);
+      setExtraConnections(snap.extraConnections);
+      setExtraLanes(snap.extraLanes);
+      setLaneNameOverrides(snap.laneNameOverrides);
+      if (snap.typeOverrides) setTypeOverrides(snap.typeOverrides);
+    }, []);
+
     // Reset offsets when flowchart data changes
     useEffect(() => {
+      undoStack.current = [];
+      setUndoCount(0);
       setPosOffsets({});
       setArrowOverrides({});
       setLabelOverrides({});
       setNumberOverrides({});
+      setTypeOverrides({});
       setEditingStepId(null);
       setSelectedArrow(null);
       setSelectedShape(null);
@@ -157,6 +237,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setExtraConnections(restoredEditState.extraConnections || []);
       setExtraLanes(restoredEditState.extraLanes || []);
       setLaneNameOverrides(restoredEditState.laneNameOverrides || {});
+      setTypeOverrides(restoredEditState.typeOverrides || {});
       setEditingStepId(null);
       setEditingLaneId(null);
       setSelectedArrow(null);
@@ -208,10 +289,11 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     // Save edited label
     const handleEditSave = useCallback(() => {
       if (editingStepId && editText.trim()) {
+        pushUndo();
         setLabelOverrides(prev => ({ ...prev, [editingStepId]: editText.trim() }));
       }
       setEditingStepId(null);
-    }, [editingStepId, editText]);
+    }, [editingStepId, editText, pushUndo]);
 
     // Pointer-down on a shape starts shape drag (skip if editing)
     const handleShapePointerDown = useCallback((e: React.PointerEvent, stepId: string) => {
@@ -236,19 +318,22 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               else if (trimmed) label = trimmed;
             }
           }
+          pushUndo();
           setExtraConnections(prev => [...prev, { from: arrowStart, to: stepId, label }]);
           setArrowStart(null);
         }
         return;
       }
+      pushUndo();
       const svgPt = screenToSVG(e.clientX, e.clientY);
       const offset = posOffsets[stepId] || { dx: 0, dy: 0 };
       setDragInfo({ type: 'shape', stepId, startMouse: svgPt, startOffset: { ...offset } });
-    }, [screenToSVG, posOffsets, editingStepId, addMode, arrowStart, data, extraShapes]);
+    }, [screenToSVG, posOffsets, editingStepId, addMode, arrowStart, data, extraShapes, pushUndo]);
 
     // Pointer-down on an arrow waypoint starts waypoint drag
     const handleWaypointPointerDown = useCallback((e: React.PointerEvent, connKey: string, wpIdx: number, currentPoints: {x: number, y: number}[]) => {
       e.stopPropagation();
+      pushUndo();
       const svgPt = screenToSVG(e.clientX, e.clientY);
       const point = currentPoints[wpIdx];
       // Initialize overrides from current path if not yet customized
@@ -256,7 +341,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         setArrowOverrides(prev => ({ ...prev, [connKey]: currentPoints.map(p => ({ ...p })) }));
       }
       setDragInfo({ type: 'waypoint', connKey, wpIdx, startMouse: svgPt, startPoint: { ...point } });
-    }, [screenToSVG, arrowOverrides]);
+    }, [screenToSVG, arrowOverrides, pushUndo]);
 
     // Window-level pointer events for reliable drag tracking (works even if cursor leaves SVG)
     useEffect(() => {
@@ -325,6 +410,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       setArrowOverrides({});
       setLabelOverrides({});
       setNumberOverrides({});
+      setTypeOverrides({});
       setEditingStepId(null);
       setSelectedArrow(null);
       setSelectedShape(null);
@@ -341,8 +427,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
 
     // Helper to delete a shape and its connections
     const deleteShape = useCallback((shapeId: string) => {
+      pushUndo();
       setDeletedShapes(prev => { const n = new Set(prev); n.add(shapeId); return n; });
-      // Also delete all connections involving this shape
       data.connections.forEach(conn => {
         if (conn.from === shapeId || conn.to === shapeId) {
           setDeletedConnections(prev => { const n = new Set(prev); n.add(`${conn.from}->${conn.to}`); return n; });
@@ -350,13 +436,19 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       });
       setExtraConnections(prev => prev.filter(c => c.from !== shapeId && c.to !== shapeId));
       setSelectedShape(null);
-    }, [data.connections]);
+    }, [data.connections, pushUndo]);
 
     // Keyboard listener for arrow/shape deletion (Delete/Backspace) and deselection (Escape)
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+          e.preventDefault();
+          performUndo();
+          return;
+        }
         if (selectedArrow && (e.key === 'Delete' || e.key === 'Backspace') && !editingStepId) {
           e.preventDefault();
+          pushUndo();
           setDeletedConnections(prev => {
             const next = new Set(prev);
             next.add(selectedArrow);
@@ -371,7 +463,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }
         if (selectedShape && (e.key === 'Delete' || e.key === 'Backspace') && !editingStepId) {
           e.preventDefault();
-          deleteShape(selectedShape);
+          deleteShape(selectedShape); // deleteShape already calls pushUndo internally
         }
         if (e.key === 'Escape') {
           setSelectedArrow(null);
@@ -382,7 +474,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedArrow, selectedShape, editingStepId, deleteShape]);
+    }, [selectedArrow, selectedShape, editingStepId, deleteShape, pushUndo, performUndo]);
 
     // Click on arrow path to select/deselect it
     const handleArrowClick = useCallback((e: React.PointerEvent, connKey: string) => {
@@ -393,6 +485,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     // Click on a path segment to insert a new waypoint and start dragging it
     const handleSegmentClick = useCallback((e: React.PointerEvent, connKey: string, segmentIdx: number, currentPoints: {x: number, y: number}[]) => {
       e.stopPropagation();
+      pushUndo();
       const svgPt = screenToSVG(e.clientX, e.clientY);
       const points = arrowOverrides[connKey]
         ? [...arrowOverrides[connKey]]
@@ -403,7 +496,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       // Start dragging the new point immediately
       setDragInfo({ type: 'waypoint', connKey, wpIdx: segmentIdx + 1, startMouse: svgPt, startPoint: { x: svgPt.x, y: svgPt.y } });
       setSelectedArrow(connKey);
-    }, [screenToSVG, arrowOverrides]);
+    }, [screenToSVG, arrowOverrides, pushUndo]);
 
     // Calculate dimensions and step numbers
     const { maxColumns, stepPositions, stepNumbers } = useMemo(() => {
@@ -611,6 +704,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             const current = String(num);
             const input = prompt('Edit step number (leave blank to remove):', current);
             if (input === null) return; // cancelled
+            pushUndo();
             if (input.trim() === '') {
               setNumberOverrides(prev => ({ ...prev, [stepId]: null }));
             } else {
@@ -654,7 +748,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#047857"
                 stroke="#065f46"
                 strokeWidth="1.5"
-                filter="url(#shadow)"
+                filter={"url(#" + uid + "-shadow)"}
               />
               {seLines.map((line, i) => (
                 <text key={i} x={cx} y={cy + 4 + (i - (seLines.length - 1) / 2) * (seFontSize + 2)}
@@ -679,7 +773,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#059669"
                 stroke="#047857"
                 strokeWidth="1.5"
-                filter="url(#shadow)"
+                filter={"url(#" + uid + "-shadow)"}
               />
               {decisionLines.map((line, i) => (
                 <text
@@ -717,7 +811,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#059669"
                 stroke="#047857"
                 strokeWidth="1.5"
-                filter="url(#shadow)"
+                filter={"url(#" + uid + "-shadow)"}
               />
               {docLines.map((line, i) => (
                 <text
@@ -752,7 +846,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="#f8f9fa"
                 stroke="#9ca3af"
                 strokeWidth="1.5"
-                filter="url(#shadow)"
+                filter={"url(#" + uid + "-shadow)"}
               />
               <line x1={cx - halfW + 8} y1={cy - halfH} x2={cx - halfW + 8} y2={cy + halfH} stroke="#6b7280" strokeWidth="1" />
               <line x1={cx + halfW - 8} y1={cy - halfH} x2={cx + halfW - 8} y2={cy + halfH} stroke="#6b7280" strokeWidth="1" />
@@ -794,7 +888,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="white"
                 stroke="#374151"
                 strokeWidth="1.5"
-                filter="url(#shadow)"
+                filter={"url(#" + uid + "-shadow)"}
               />
               {/* Right ellipse cap */}
               <ellipse cx={cx + cylHalfW - erx} cy={cy} rx={erx} ry={cylHalfH}
@@ -837,7 +931,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 fill="white"
                 stroke="#059669"
                 strokeWidth="1.5"
-                filter="url(#shadow)"
+                filter={"url(#" + uid + "-shadow)"}
               />
               {processLines.map((line, i) => (
                 <text
@@ -873,7 +967,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       for (const step of lane.steps) {
         const pos = getStepPosition(step.id);
         if (!pos) continue;
-        const dims = getShapeDims(step.type);
+        const dims = getShapeDims(typeOverrides[step.id] || step.type);
         allShapeBounds.push({ id: step.id, cx: pos.x, cy: pos.y,
           hw: dims.w / 2 + ARROW_GAP,
           hh: dims.h / 2 + ARROW_GAP });
@@ -882,7 +976,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
     for (const shape of extraShapes) {
       const pos = getStepPosition(shape.id);
       if (!pos) continue;
-      const dims = getShapeDims(shape.type);
+      const dims = getShapeDims(typeOverrides[shape.id] || shape.type);
       allShapeBounds.push({ id: shape.id, cx: pos.x, cy: pos.y,
         hw: dims.w / 2 + ARROW_GAP,
         hh: dims.h / 2 + ARROW_GAP });
@@ -930,6 +1024,19 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
       }
       hChannels.push({ y: baseY, xMin, xMax });
       return overlap * 14;
+    };
+
+    // ── Edge-snap helpers — used when rendering overridden paths so endpoints
+    // always stay glued to the current shape boundary even after shapes are moved.
+    const exitEdge = (center: {x:number;y:number}, toward: {x:number;y:number}, hw: number, hh: number) => {
+      const dx = toward.x - center.x, dy = toward.y - center.y;
+      if (Math.abs(dx) >= Math.abs(dy)) return { x: center.x + (dx >= 0 ? hw : -hw), y: center.y };
+      return { x: center.x, y: center.y + (dy >= 0 ? hh : -hh) };
+    };
+    const entryEdge = (center: {x:number;y:number}, from: {x:number;y:number}, hw: number, hh: number) => {
+      const dx = from.x - center.x, dy = from.y - center.y;
+      if (Math.abs(dx) >= Math.abs(dy)) return { x: center.x + (dx >= 0 ? hw + ARROW_GAP : -(hw + ARROW_GAP)), y: center.y };
+      return { x: center.x, y: center.y + (dy >= 0 ? hh + ARROW_GAP : -(hh + ARROW_GAP)) };
     };
 
     // Post-process ANY path: iteratively check every segment for shape collisions and detour around
@@ -1113,9 +1220,26 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             );
           })}
           <div style={{ width: '1px', height: '22px', background: 'rgba(255,255,255,0.25)', margin: '0 4px' }} />
+          <button
+            onClick={performUndo}
+            disabled={undoCount === 0}
+            title="Undo last change (Cmd+Z)"
+            style={{
+              padding: '5px 12px', borderRadius: '6px', cursor: undoCount === 0 ? 'not-allowed' : 'pointer',
+              border: '1.5px solid rgba(255,255,255,0.35)',
+              background: undoCount > 0 ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.07)',
+              color: undoCount > 0 ? 'white' : 'rgba(255,255,255,0.35)',
+              fontSize: '12px', fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: '4px',
+              transition: 'all 0.15s ease',
+            }}>
+            ↩ Undo{undoCount > 0 ? ` (${undoCount})` : ''}
+          </button>
+          <div style={{ width: '1px', height: '22px', background: 'rgba(255,255,255,0.25)', margin: '0 4px' }} />
           <button onClick={() => {
             const name = prompt('Swimlane name (e.g., Finance, Legal, IT):');
             if (name && name.trim()) {
+              pushUndo();
               const laneId = `lane-extra-${++extraIdCounter.current}`;
               setExtraLanes(prev => [...prev, { id: laneId, name: name.trim() }]);
             }
@@ -1164,6 +1288,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       extraConnections: extraConnections.map(c => ({ ...c })),
                       extraLanes: extraLanes.map(l => ({ ...l })),
                       laneNameOverrides: { ...laneNameOverrides },
+                      typeOverrides: { ...typeOverrides },
                     };
                     onSaveVersion(editState);
                   }}
@@ -1215,6 +1340,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           setSelectedArrow(null);
           setSelectedShape(null);
           if (addMode && addMode !== 'arrow') {
+            pushUndo();
             const svgPt = screenToSVG(e.clientX, e.clientY);
             const newId = `extra-${++extraIdCounter.current}`;
             // Prompt for step number
@@ -1237,7 +1363,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         }}
       >
         {/* Title Header */}
-        <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill="url(#headerGrad)" />
+        <rect x="0" y="0" width={svgWidth} height={HEADER_HEIGHT} fill={"url(#" + uid + "-hg)"} />
         <text
           x={svgWidth / 2}
           y={HEADER_HEIGHT / 2 + 6}
@@ -1260,7 +1386,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const displayName = laneNameOverrides[laneKey] || lane.name;
           return (
             <g key={`bg-${laneIndex}`}>
-              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="url(#laneGrad)" stroke="none" />
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill={"url(#" + uid + "-lg)"} stroke="none" />
               {isEditingThisLane ? (
                 <foreignObject x={2} y={laneY + laneH / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
                   <input
@@ -1269,6 +1395,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                     onChange={(e) => setEditLaneText(e.target.value)}
                     onBlur={() => {
                       if (editLaneText.trim()) {
+                        pushUndo();
                         setLaneNameOverrides(prev => ({ ...prev, [laneKey]: editLaneText.trim() }));
                       }
                       setEditingLaneId(null);
@@ -1276,6 +1403,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         if (editLaneText.trim()) {
+                          pushUndo();
                           setLaneNameOverrides(prev => ({ ...prev, [laneKey]: editLaneText.trim() }));
                         }
                         setEditingLaneId(null);
@@ -1311,7 +1439,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {displayName}
                 </text>
               )}
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill={laneIndex % 2 === 0 ? 'white' : '#f8fafc'} stroke="#e2e8f0" strokeWidth="0.75" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill={laneIndex % 2 === 0 ? 'white' : '#f8fafc'} stroke="#94a3b8" strokeWidth="1" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -1336,7 +1464,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const isEditingLane = editingLaneId === lane.id;
           return (
             <g key={`extra-lane-${lane.id}`}>
-              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill="url(#laneGrad)" stroke="none" />
+              <rect x="0" y={laneY} width={LANE_HEADER_WIDTH} height={laneH} fill={"url(#" + uid + "-lg)"} stroke="none" />
               {isEditingLane ? (
                 <foreignObject x={2} y={laneY + laneH / 2 - 40} width={LANE_HEADER_WIDTH - 4} height={80}>
                   <input
@@ -1345,6 +1473,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                     onChange={(e) => setEditLaneText(e.target.value)}
                     onBlur={() => {
                       if (editLaneText.trim()) {
+                        pushUndo();
                         setExtraLanes(prev => prev.map(l => l.id === lane.id ? { ...l, name: editLaneText.trim() } : l));
                       }
                       setEditingLaneId(null);
@@ -1352,6 +1481,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         if (editLaneText.trim()) {
+                          pushUndo();
                           setExtraLanes(prev => prev.map(l => l.id === lane.id ? { ...l, name: editLaneText.trim() } : l));
                         }
                         setEditingLaneId(null);
@@ -1387,7 +1517,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   {lane.name}
                 </text>
               )}
-              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill={laneIndex % 2 === 0 ? 'white' : '#f8fafc'} stroke="#e2e8f0" strokeWidth="0.75" />
+              <rect x={LANE_HEADER_WIDTH} y={laneY} width={svgWidth - LANE_HEADER_WIDTH} height={laneH} fill={laneIndex % 2 === 0 ? 'white' : '#f8fafc'} stroke="#94a3b8" strokeWidth="1" />
               {Array.from({ length: maxColumns }).map((_, colIndex) => (
                 <line
                   key={colIndex}
@@ -1419,24 +1549,24 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {/* Layer 2: Arrows (rendered BEFORE shapes so shapes sit visually on top) */}
         {/* Arrow definitions */}
         <defs>
-          <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker id={uid + "-ah"} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#6b7280" />
           </marker>
-          <marker id="arrowhead-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker id={uid + "-ahg"} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#16a34a" />
           </marker>
-          <marker id="arrowhead-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <marker id={uid + "-ahr"} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#dc2626" />
           </marker>
-          <linearGradient id="headerGrad" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={uid + "-hg"} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#065f46" />
             <stop offset="100%" stopColor="#059669" />
           </linearGradient>
-          <linearGradient id="laneGrad" x1="0" y1="0" x2="1" y2="0">
+          <linearGradient id={uid + "-lg"} x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="#047857" />
             <stop offset="100%" stopColor="#059669" />
           </linearGradient>
-          <filter id="shadow" x="-10%" y="-10%" width="140%" height="140%">
+          <filter id={uid + "-shadow"} x="-10%" y="-10%" width="140%" height="140%">
             <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.10" />
           </filter>
         </defs>
@@ -1622,14 +1752,22 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           path = avoidShapesInPath(path, skip);
 
           // Use manual arrow overrides if available (virtual connections have none)
+          // When overrides exist, re-snap their first/last points to the current
+          // shape edges so the arrow stays attached as shapes are moved.
           const overridePoints = isVirtual ? undefined : arrowOverrides[connKey];
-          const finalPath = overridePoints ? buildPath(overridePoints) : path;
-          const pathPoints = overridePoints || parsePath(path);
+          let adjustedOverride = overridePoints;
+          if (overridePoints && overridePoints.length >= 2) {
+            const newStart = exitEdge(fromPos, toPos, fromHalfW, fromHalfH);
+            const newEnd   = entryEdge(toPos, fromPos, toHalfW, toHalfH);
+            adjustedOverride = [newStart, ...overridePoints.slice(1, -1), newEnd];
+          }
+          const finalPath = adjustedOverride ? buildPath(adjustedOverride) : path;
+          const pathPoints = adjustedOverride || parsePath(path);
 
           // Styling
           const isSelected = !isVirtual && selectedArrow === connKey;
           const strokeColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
-          const markerEnd = isYes ? 'url(#arrowhead-green)' : isNo ? 'url(#arrowhead-red)' : 'url(#arrowhead)';
+          const markerEnd = isYes ? ('url(#' + uid + '-ahg)') : isNo ? ('url(#' + uid + '-ahr)') : ('url(#' + uid + '-ah)');
           const labelBgColor = isYes ? '#dcfce7' : isNo ? '#fee2e2' : 'white';
           const labelBorderColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#d1d5db';
           const labelTextColor = isYes ? '#15803d' : isNo ? '#dc2626' : '#374151';
@@ -1775,29 +1913,62 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           const overridePoints = arrowOverrides[connKey];
           const extraSkip = new Set([conn.from, conn.to]);
           let path: string;
-          if (overridePoints) {
-            path = buildPath(overridePoints);
+          // Compute shape dims for both override and fresh-path cases
+          const allForExtra = [...data.lanes.flatMap(l => l.steps), ...extraShapes];
+          const fromShape = allForExtra.find(s => s.id === conn.from);
+          const toShape   = allForExtra.find(s => s.id === conn.to);
+          const fromDims  = getShapeDims(fromShape?.type ?? 'process');
+          const toDims    = getShapeDims(toShape?.type   ?? 'process');
+          let adjustedExtraOverride: {x:number;y:number}[] | undefined;
+          if (overridePoints && overridePoints.length >= 2) {
+            // Re-snap endpoints to current shape edges so the arrow follows the shape
+            const newStart = exitEdge(fromPos, toPos, fromDims.w / 2, fromDims.h / 2);
+            const newEnd   = entryEdge(toPos, fromPos, toDims.w / 2, toDims.h / 2);
+            adjustedExtraOverride = [newStart, ...overridePoints.slice(1, -1), newEnd];
+            path = buildPath(adjustedExtraOverride);
           } else {
+            // Edge-snap fresh path (no override)
             const dx = toPos.x - fromPos.x;
             const dy = toPos.y - fromPos.y;
-            if (Math.abs(dy) < 20 && dx !== 0) {
-              path = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
-            } else if (Math.abs(dx) < 20 && dy !== 0) {
-              path = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
+            const absDx = Math.abs(dx);
+            const absDy = Math.abs(dy);
+            const GAP = ARROW_GAP;
+            let sX: number, sY: number, eX: number, eY: number;
+            if (absDx >= absDy) {
+              // Primarily horizontal: exit left/right edge, enter left/right edge
+              sX = fromPos.x + (dx >= 0 ? fromDims.w / 2 : -fromDims.w / 2);
+              sY = fromPos.y;
+              eX = toPos.x   + (dx >= 0 ? -toDims.w / 2 - GAP : toDims.w / 2 + GAP);
+              eY = toPos.y;
+              if (Math.abs(dy) < 10) {
+                path = `M ${sX} ${sY} L ${eX} ${eY}`;
+              } else {
+                const midX = findClearVert((sX + eX) / 2, sY, eY, extraSkip);
+                path = `M ${sX} ${sY} L ${midX} ${sY} L ${midX} ${eY} L ${eX} ${eY}`;
+              }
             } else {
-              const midX = findClearVert((fromPos.x + toPos.x) / 2, fromPos.y, toPos.y, extraSkip);
-              path = `M ${fromPos.x} ${fromPos.y} L ${midX} ${fromPos.y} L ${midX} ${toPos.y} L ${toPos.x} ${toPos.y}`;
+              // Primarily vertical: exit top/bottom edge, enter top/bottom edge
+              sX = fromPos.x;
+              sY = fromPos.y + (dy >= 0 ? fromDims.h / 2 : -fromDims.h / 2);
+              eX = toPos.x;
+              eY = toPos.y   + (dy >= 0 ? -toDims.h / 2 - GAP : toDims.h / 2 + GAP);
+              if (Math.abs(dx) < 10) {
+                path = `M ${sX} ${sY} L ${eX} ${eY}`;
+              } else {
+                const midX = findClearVert((sX + eX) / 2, sY, eY, extraSkip);
+                path = `M ${sX} ${sY} L ${midX} ${sY} L ${midX} ${eY} L ${eX} ${eY}`;
+              }
             }
             path = avoidShapesInPath(path, extraSkip);
           }
-          const pathPoints = overridePoints || parsePath(path);
+          const pathPoints = adjustedExtraOverride || parsePath(path);
           const isSelected = selectedArrow === connKey;
           const midPt = pathPoints[Math.floor(pathPoints.length / 2)] || pathPoints[0];
           // Yes/No coloring for extra connections
           const isYes = conn.label?.toLowerCase() === 'yes';
           const isNo = conn.label?.toLowerCase() === 'no';
           const strokeColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#6b7280';
-          const markerEnd = isYes ? 'url(#arrowhead-green)' : isNo ? 'url(#arrowhead-red)' : 'url(#arrowhead)';
+          const markerEnd = isYes ? ('url(#' + uid + '-ahg)') : isNo ? ('url(#' + uid + '-ahr)') : ('url(#' + uid + '-ah)');
           const labelBgColor = isYes ? '#dcfce7' : isNo ? '#fee2e2' : 'white';
           const labelBorderColor = isYes ? '#16a34a' : isNo ? '#dc2626' : '#d1d5db';
           const labelTextColor = isYes ? '#15803d' : isNo ? '#dc2626' : '#374151';
@@ -1897,7 +2068,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               const pos = getStepPosition(step.id);
               if (!pos) return null;
               if (deletedShapes.has(step.id)) return null;
-              const isDecision = step.type === 'decision';
+              const currentType = (typeOverrides[step.id] || step.type) as ProcessStep['type'];
+              const isDecision = currentType === 'decision';
               const hw = isDecision ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
               const hh = isDecision ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
               const currentLabel = labelOverrides[step.id] || step.label;
@@ -1941,7 +2113,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       rx="6"
                     />
                   )}
-                  {renderShape(step, pos.x, pos.y)}
+                  {renderShape({...step, type: currentType}, pos.x, pos.y)}
                   {/* Delete button when shape is selected */}
                   {isShapeSelected && !isEditing && (
                     <g
@@ -1957,6 +2129,48 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                       <text x={pos.x + hw - 2} y={pos.y - hh + 6} textAnchor="middle" fill="white" fontSize="12" fontWeight="bold" fontFamily="Arial">×</text>
                     </g>
                   )}
+                  {/* Shape-type picker — appears below selected shape */}
+                  {isShapeSelected && !isEditing && (() => {
+                    const shapeTypes: Array<{key: ProcessStep['type']; label: string}> = [
+                      { key: 'process',    label: 'Process'  },
+                      { key: 'subprocess', label: 'Sub'      },
+                      { key: 'decision',   label: 'Decision' },
+                      { key: 'document',   label: 'Doc'      },
+                      { key: 'database',   label: 'System'   },
+                      { key: 'start',      label: 'Start'    },
+                      { key: 'end',        label: 'End'      },
+                    ];
+                    const btnW = 52, btnH = 20, gap = 4;
+                    const totalW = shapeTypes.length * (btnW + gap) - gap;
+                    const startX = pos.x - totalW / 2;
+                    const panelY = pos.y + hh + 14;
+                    return (
+                      <g data-no-export="true" onPointerDown={(e) => e.stopPropagation()}>
+                        <rect x={startX - 6} y={panelY - 6} width={totalW + 12} height={btnH + 12}
+                          rx={6} fill="#1e293b" fillOpacity={0.92} stroke="#334155" strokeWidth={1} />
+                        {shapeTypes.map((t, ti) => {
+                          const bx = startX + ti * (btnW + gap);
+                          const isActive = currentType === t.key;
+                          return (
+                            <g key={t.key} style={{ cursor: 'pointer' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                pushUndo();
+                                setTypeOverrides(prev => ({ ...prev, [step.id]: t.key }));
+                              }}>
+                              <rect x={bx} y={panelY} width={btnW} height={btnH} rx={4}
+                                fill={isActive ? '#059669' : '#334155'}
+                                stroke={isActive ? '#34d399' : 'transparent'} strokeWidth={1} />
+                              <text x={bx + btnW / 2} y={panelY + 13} textAnchor="middle"
+                                fill={isActive ? 'white' : '#94a3b8'} fontSize="9" fontFamily="Arial" fontWeight={isActive ? 700 : 400}>
+                                {t.label}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </g>
+                    );
+                  })()}
                   {/* Inline text editing overlay */}
                   {isEditing && (
                     <foreignObject
@@ -2003,11 +2217,13 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         {extraShapes.map((shape, idx) => {
           const pos = getStepPosition(shape.id);
           if (!pos) return null;
-          const isDecision = shape.type === 'decision';
+          const extraCurrentType = (typeOverrides[shape.id] || shape.type) as ProcessStep['type'];
+          const isDecision = extraCurrentType === 'decision';
           const hw = isDecision ? DECISION_SIZE / 2 : SHAPE_WIDTH / 2;
           const hh = isDecision ? DECISION_SIZE / 2 : SHAPE_HEIGHT / 2;
           const currentLabel = labelOverrides[shape.id] || shape.label;
           const isEditing = editingStepId === shape.id;
+          const isExtraSelected = selectedShape === shape.id;
           return (
             <g key={`extra-shape-${idx}`}
               style={{ cursor: addMode === 'arrow' ? 'crosshair' : isEditing ? 'text' : (dragInfo?.type === 'shape' && dragInfo.stepId === shape.id) ? 'grabbing' : 'grab' }}
@@ -2016,7 +2232,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               onClick={(e) => e.stopPropagation()}
             >
               <rect x={pos.x - hw - 4} y={pos.y - hh - 4} width={(hw + 4) * 2} height={(hh + 4) * 2} fill="transparent" stroke="none" />
-              {renderShape({ id: shape.id, label: shape.label, type: shape.type, x: 0 }, pos.x, pos.y)}
+              {renderShape({ id: shape.id, label: shape.label, type: extraCurrentType, x: 0 }, pos.x, pos.y)}
               {isEditing && (
                 <foreignObject x={pos.x - hw + 2} y={pos.y - hh + 2} width={hw * 2 - 4} height={hh * 2 - 4}>
                   <textarea ref={editInputRef} value={editText}
@@ -2049,6 +2265,48 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   <text x={pos.x + hw - 2} y={pos.y - hh + 6} textAnchor="middle" fill="white" fontSize="12" fontWeight="bold" fontFamily="Arial">×</text>
                 </g>
               )}
+              {/* Shape-type picker for extra shapes */}
+              {isExtraSelected && !isEditing && (() => {
+                const shapeTypes: Array<{key: ProcessStep['type']; label: string}> = [
+                  { key: 'process',    label: 'Process'  },
+                  { key: 'subprocess', label: 'Sub'      },
+                  { key: 'decision',   label: 'Decision' },
+                  { key: 'document',   label: 'Doc'      },
+                  { key: 'database',   label: 'System'   },
+                  { key: 'start',      label: 'Start'    },
+                  { key: 'end',        label: 'End'      },
+                ];
+                const btnW = 52, btnH = 20, gap = 4;
+                const totalW = shapeTypes.length * (btnW + gap) - gap;
+                const startX = pos.x - totalW / 2;
+                const panelY = pos.y + hh + 14;
+                return (
+                  <g data-no-export="true" onPointerDown={(e) => e.stopPropagation()}>
+                    <rect x={startX - 6} y={panelY - 6} width={totalW + 12} height={btnH + 12}
+                      rx={6} fill="#1e293b" fillOpacity={0.92} stroke="#334155" strokeWidth={1} />
+                    {shapeTypes.map((t, ti) => {
+                      const bx = startX + ti * (btnW + gap);
+                      const isActive = extraCurrentType === t.key;
+                      return (
+                        <g key={t.key} style={{ cursor: 'pointer' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            pushUndo();
+                            setTypeOverrides(prev => ({ ...prev, [shape.id]: t.key }));
+                          }}>
+                          <rect x={bx} y={panelY} width={btnW} height={btnH} rx={4}
+                            fill={isActive ? '#059669' : '#334155'}
+                            stroke={isActive ? '#34d399' : 'transparent'} strokeWidth={1} />
+                          <text x={bx + btnW / 2} y={panelY + 13} textAnchor="middle"
+                            fill={isActive ? 'white' : '#94a3b8'} fontSize="9" fontFamily="Arial" fontWeight={isActive ? 700 : 400}>
+                            {t.label}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })()}
             </g>
           );
         })}

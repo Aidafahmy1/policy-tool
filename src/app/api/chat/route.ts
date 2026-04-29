@@ -89,13 +89,60 @@ Key rules:
 - Steps in the same lane at different x positions will be placed correctly
 - Connections show the flow between steps, including cross-lane connections
 - Use descriptive labels for all steps
-- Include 8-15 steps typically for comprehensive processes
+- Include 8-15 steps typically for comprehensive processes; for complex multi-track processes, include as many steps as needed for completeness
 - Include decision points where approvals or choices occur
 
-DECISION POINT RULES (CRITICAL):
+START & END POINT RULES — THE NORM vs. THE EXCEPTION:
+
+THE NORM — Single Start, Single End:
+- The default for most processes: one triggering event starts the flow and one final outcome ends it.
+- All branches (Yes/No paths, rework loops, escalations) ultimately converge back to ONE end shape.
+- Use this for: Procure-to-Pay, Order-to-Cash, Hiring, Onboarding, Invoice Approval, and most linear or lightly branching processes.
+
+THE EXCEPTION — Multiple Starts and/or Multiple Ends:
+- Some processes are genuinely multi-track: parallel, independent sub-processes that each have their own lifecycle, triggering event, and terminal outcome. In these cases, multiple start and/or end shapes are CORRECT and REQUIRED.
+- You MUST use multiple starts/ends when the user's process description includes ANY of the following signals:
+  1. PARALLEL INDEPENDENT FLOWS: Two or more sub-processes run simultaneously and are not triggered by the same single event (e.g., a "Penalty Identification" track and a "Penalty Enforcement & Appeal" track in a compliance enforcement process — each begins independently and ends independently).
+  2. MULTIPLE DISTINCT TRIGGERING EVENTS: The process can be initiated by genuinely different events from different organizational entities (e.g., a complaint can be filed by an external party OR detected internally by a regulator — these are two separate starts, not a decision).
+  3. MULTIPLE TERMINAL OUTCOMES: The process ends in fundamentally different final states that are not variants of the same outcome (e.g., "Penalty Paid and Case Closed", "Appeal Upheld — Penalty Waived", "Case Escalated to Legal Authority" are three distinct ends, not one end with branches).
+  4. COMPLEX REGULATORY/ENFORCEMENT/COMPLIANCE PROCESSES: Processes like enforcement, appeals, inspections, multi-authority approvals, and legal proceedings almost always have multiple starts and ends by nature.
+  5. CROSS-ORGANIZATIONAL PROCESSES: When multiple organizations or authorities each independently own a sub-process that connects to others at specific handoff points.
+
+- ❌ DO NOT use multiple ends just because a decision diamond has two paths — those paths should rejoin or lead to one final end.
+- ❌ DO NOT use multiple starts just because different departments are involved — swimlanes handle multi-department flows with a single start.
+- ✅ DO use multiple starts/ends when the sub-processes are genuinely non-sequential and non-converging — i.e., completing one does NOT cause the other to start, and they do not share a common final step.
+
+HOW TO STRUCTURE MULTIPLE START/END FLOWS:
+- Place each start shape in the swimlane of the role/department that triggers that sub-process.
+- Each start must have a unique, descriptive triggering event label (e.g., "Violation Detected by Inspector", "NPO Files Appeal Request").
+- Each end must have a unique, descriptive final outcome label (e.g., "Penalty Enforced and Recorded", "Appeal Approved — Penalty Waived", "Case Referred to Legal Authority").
+- Assign x positions so each parallel track flows left-to-right without overlapping the other track's columns where possible.
+- Clearly connect handoff points between tracks using cross-lane connections (e.g., the enforcement track feeding into the appeal track at a specific step).
+- Label cross-track handoff connections clearly (e.g., "Triggers Appeal", "Notifies Authority", "Escalates To").
+- STEP COUNT: Multi-track processes may have 20-40+ steps across all tracks — do NOT truncate for brevity. Completeness is more important than conciseness for these complex processes.
+
+DECISION POINT RULES (CRITICAL — STRICTLY ENFORCED):
 - Every decision (diamond) MUST have exactly TWO outgoing connections: one labeled "Yes" and one labeled "No"
 - Both "Yes" and "No" paths MUST lead to a clear activity/process shape (rectangle) — NEVER to another decision directly
-- SAME-LANE RULE (CRITICAL): A decision diamond MUST be placed in the SAME swimlane as the activity that DIRECTLY precedes it and triggers the question. The decision asks a question about THAT activity's outcome. Example: if "Manager Reviews Budget" is in the Manager lane, the decision "Budget Approved?" must ALSO be in the Manager lane at x+1. NEVER put the decision in a different lane from the activity that feeds it.
+
+IMMEDIATE PLACEMENT RULE (MANDATORY):
+- A decision diamond MUST be placed IMMEDIATELY after the activity it questions — at x = (preceding activity x) + 1, in the EXACT SAME swimlane as that activity.
+- ❌ WRONG: "Manager Reviews Budget" (Manager lane, x:3) → other steps → "Budget Approved?" (different lane or x:6)
+- ✅ CORRECT: "Manager Reviews Budget" (Manager lane, x:3) → "Budget Approved?" (Manager lane, x:4) — same lane, next column
+- NEVER place a decision in a different swimlane from the activity that directly feeds it.
+- NEVER skip columns between an activity and its decision — they must be at consecutive x values.
+
+LABEL DERIVATION RULE (MANDATORY):
+- The decision label MUST be a direct yes/no question formed from the outcome of the immediately preceding activity.
+- Formula: Take the preceding activity verb/action and turn it into a completion question.
+- ✅ Examples of correct activity → decision pairs:
+  - "Manager Reviews Budget" → "Budget Approved?"
+  - "Inspector Checks Quality" → "Quality Passed?"
+  - "Legal Reviews Contract" → "Contract Compliant?"
+  - "Finance Validates Invoice" → "Invoice Valid?"
+  - "Supplier Submits Quotation" → "Quotation Accepted?"
+- ❌ WRONG: Generic labels like "Proceed?", "OK?", "Continue?", "Decision?" — must always reference the specific preceding activity outcome.
+
 - The "Yes" path continues the MAIN flow → goes to the next process step at x+1 in the same lane (rightward continuation)
 - The "No" path MUST lead to a NEW, DISTINCT activity/process step that describes what happens when the answer is No (e.g., "Revise Request", "Escalate Issue", "Rework Document", "Notify Rejection")
 - The "No" path must NEVER loop back to the SAME decision shape. It must always go to a different process/activity step first.
@@ -104,6 +151,7 @@ DECISION POINT RULES (CRITICAL):
 - If the "No" activity needs rework, connect it to an earlier process step (NOT back to the decision)
 - NEVER leave decision connections without "Yes"/"No" labels
 - Decision "Yes" and "No" paths must NEVER connect to a document shape. They must ALWAYS connect to a process/activity rectangle.
+- MANDATORY FINAL CHECK: Before outputting the JSON, verify every decision diamond: (1) same lane as preceding activity? (2) x = preceding activity x + 1? (3) label is a specific yes/no question about that activity's outcome? If any check fails, fix it before outputting.
 
 DOCUMENT SHAPE RULES (CRITICAL — READ CAREFULLY):
 - ALWAYS include relevant input and output documents in the FIRST flowchart generation. Do NOT wait for the user to ask for documents separately. If a process step naturally produces or requires a document (e.g., Purchase Order, Invoice, Approval Form, Contract, Report, etc.), include it as a document shape from the start.
