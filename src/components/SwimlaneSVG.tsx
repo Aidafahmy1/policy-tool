@@ -47,6 +47,7 @@ interface SwimlaneSVGProps {
   onToggleHistory?: () => void;
   restoredEditState?: DiagramEditState | null;
   showHistoryActive?: boolean;
+  onEditStateChange?: (editState: DiagramEditState) => void;
 }
 
 // Dimensions with extra spacing to avoid arrow-shape overlap
@@ -62,7 +63,7 @@ const DOC_HEIGHT = 48;   // smaller height for document shapes
 const ARROW_GAP = 14; // min gap between arrow and shape edge
 
 const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
-  ({ data, onLayoutChange, onSaveVersion, onToggleHistory, restoredEditState, showHistoryActive }, ref) => {
+  ({ data, onLayoutChange, onSaveVersion, onToggleHistory, restoredEditState, showHistoryActive, onEditStateChange }, ref) => {
     const svgRef = useRef<SVGSVGElement | null>(null);
     // Unique prefix for all SVG IDs in this instance — prevents conflicts when
     // two SwimlaneSVG components are mounted at the same time (e.g. normal + expanded).
@@ -161,6 +162,22 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
         deletedConnections, deletedShapes, extraShapes, extraConnections,
         extraLanes, laneNameOverrides, typeOverrides,
       };
+      // Notify parent of edit state changes (used by full-view to sync back)
+      if (onEditStateChange) {
+        onEditStateChange({
+          posOffsets: { ...posOffsets },
+          arrowOverrides: Object.fromEntries(Object.entries(arrowOverrides).map(([k, v]) => [k, v.map(p => ({ ...p }))])),
+          labelOverrides: { ...labelOverrides },
+          numberOverrides: { ...numberOverrides },
+          deletedConnections: Array.from(deletedConnections),
+          deletedShapes: Array.from(deletedShapes),
+          extraShapes: extraShapes.map(s => ({ ...s })),
+          extraConnections: extraConnections.map(c => ({ ...c })),
+          extraLanes: extraLanes.map(l => ({ ...l })),
+          laneNameOverrides: { ...laneNameOverrides },
+          typeOverrides: { ...typeOverrides },
+        });
+      }
     }, [posOffsets, arrowOverrides, labelOverrides, numberOverrides,
         deletedConnections, deletedShapes, extraShapes, extraConnections,
         extraLanes, laneNameOverrides, typeOverrides]);

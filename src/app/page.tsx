@@ -39,6 +39,8 @@ export default function Home() {
   const htmlDiagramRef = useRef<HTMLDivElement>(null);
   const expandedSvgRef = useRef<SVGSVGElement>(null);
   const expandedHtmlRef = useRef<HTMLDivElement>(null);
+  const expandedEditStateRef = useRef<DiagramEditState | null>(null);
+  const mainEditStateRef = useRef<DiagramEditState | null>(null);
   const prevConversationId = useRef<string | null>(null);
 
   // Load versions for current conversation
@@ -590,7 +592,13 @@ export default function Home() {
                     )}
                     {/* Full View Button */}
                     <button
-                      onClick={() => setIsExpanded(true)}
+                      onClick={() => {
+                        // Snapshot main view's current edits so full view starts with them
+                        if (mainEditStateRef.current) {
+                          setRestoredEditState({ ...mainEditStateRef.current });
+                        }
+                        setIsExpanded(true);
+                      }}
                       className="text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
                       style={{ background: '#0C3B2E' }}
                     >
@@ -611,6 +619,7 @@ export default function Home() {
                     onToggleHistory={conversationId ? () => setShowHistory(h => !h) : undefined}
                     restoredEditState={restoredEditState}
                     showHistoryActive={showHistory}
+                    onEditStateChange={(state) => { mainEditStateRef.current = state; }}
                   />
                 ) : mermaidCode ? (
                   <MermaidDiagram ref={htmlDiagramRef} code={mermaidCode} />
@@ -699,7 +708,13 @@ export default function Home() {
                   </>
                 )}
                 <button
-                  onClick={() => setIsExpanded(false)}
+                  onClick={() => {
+                    // Sync edits from full view back to main view before closing
+                    if (expandedEditStateRef.current) {
+                      setRestoredEditState({ ...expandedEditStateRef.current });
+                    }
+                    setIsExpanded(false);
+                  }}
                   className="text-gray-500 hover:text-gray-700 p-1"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -713,7 +728,15 @@ export default function Home() {
             <div className="p-4 overflow-auto" style={{ maxHeight: 'calc(95vh - 120px)' }}>
               <div className="inline-block min-w-max">
                 {swimlaneData ? (
-                  <SwimlaneSVG ref={expandedSvgRef} data={swimlaneData} />
+                  <SwimlaneSVG
+                    ref={expandedSvgRef}
+                    data={swimlaneData}
+                    restoredEditState={restoredEditState}
+                    onEditStateChange={(state) => { expandedEditStateRef.current = state; }}
+                    onSaveVersion={conversationId ? handleSaveVersion : undefined}
+                    onToggleHistory={conversationId ? () => setShowHistory(h => !h) : undefined}
+                    showHistoryActive={showHistory}
+                  />
                 ) : mermaidCode ? (
                   <MermaidDiagram ref={expandedHtmlRef} code={mermaidCode} />
                 ) : null}
