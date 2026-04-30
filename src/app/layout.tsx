@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Logic Consulting - Process Visio & Manual Generator",
+  title: "Logic Consulting - Process Diagram & Manual Generator",
   description: "Generate process diagrams and manuals with AI assistance | Logic Consulting",
 };
 

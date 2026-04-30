@@ -52,7 +52,7 @@ export default function Sidebar({ currentConversationId, onSelectConversation, o
       <div className="p-4 border-b border-white/15 flex items-start justify-between">
         <div>
           <img src="/logic-logo.png" alt="Logic Consulting" className="h-14 w-48 rounded bg-white px-1 py-0 object-cover mb-1" />
-          <p className="text-xs text-white/50 mt-1">Process Visio & Manual Generator</p>
+          <p className="text-xs text-white/50 mt-1">Process Diagram & Manual Generator</p>
         </div>
         {onCollapse && (
           <button
