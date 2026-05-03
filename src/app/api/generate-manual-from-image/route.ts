@@ -265,7 +265,7 @@ IMPORTANT: The SWIMLANE_LABELS are the department/role names in the green boxes 
     
     let prompt = COMBINED_PROMPT;
     if (customInstructions) {
-      prompt += `\n\nADDITIONAL USER INSTRUCTIONS:\n${customInstructions}`;
+      prompt += `\n\nADDITIONAL USER INSTRUCTIONS (ADDITIVE ONLY):\n${customInstructions}\n\nIMPORTANT: These instructions are additive — enrich descriptions, RACI assignments, objectives, and scope. Do NOT change step names, step order, stakeholders, or the overall manual structure.`;
     }
     
     // Add the extracted text and explicitly list the swimlane labels

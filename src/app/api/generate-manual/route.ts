@@ -127,7 +127,7 @@ function extractStepsFromSwimlane(swimlaneData: any): {
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, mermaidCode, orgStructure, swimlaneData, processName } = await request.json();
+    const { messages, mermaidCode, orgStructure, swimlaneData, processName, customInstructions } = await request.json();
 
     // ── PATH A: We have structured swimlane data ──────────────────────
     if (swimlaneData && swimlaneData.lanes) {
@@ -257,8 +257,13 @@ STEPS IN THE FLOWCHART:
 ${stepList}
 FLOW CONNECTIONS:
 ${connList}
-${orgContext}
-HERE IS THE PRE-FILLED JSON SKELETON. Fill in ONLY the "__FILL__" fields. Do NOT change anything else:
+${orgContext}${customInstructions ? `
+===== ADDITIONAL USER INSTRUCTIONS =====
+${customInstructions}
+
+IMPORTANT: These instructions are ADDITIVE ONLY — incorporate them into the "__FILL__" fields (description, accountable, consulted, informed, processObjectives, processScope). They must NOT alter the existing structure: do NOT change stepNumber, stepName, stepOrder, responsible, inputs, outputs, or the number of steps. Do NOT remove, rename, reorder, or skip any steps. The skeleton structure is locked — custom instructions only enrich the content within it.
+
+` : ''}HERE IS THE PRE-FILLED JSON SKELETON. Fill in ONLY the "__FILL__" fields. Do NOT change anything else:
 
 ${JSON.stringify({
   processName: exactProcessName,
@@ -362,6 +367,9 @@ ${JSON.stringify({
       for (const msg of messages) {
         contextMessage += `${msg.role.toUpperCase()}: ${msg.content}\n\n`;
       }
+    }
+    if (customInstructions) {
+      contextMessage += `ADDITIONAL USER INSTRUCTIONS (ADDITIVE ONLY):\n${customInstructions}\n\nIMPORTANT: These instructions are additive — enrich descriptions, RACI assignments, objectives, and scope. Do NOT change step names, step order, or the overall manual structure.\n\n`;
     }
 
     const fallbackPrompt = `You are an expert business process consultant generating a process manual as JSON. Output ONLY valid JSON with this structure: { "processName", "processLevel", "processObjectives", "processScope", "stakeholders": [...], "authorityMatrixDefinition": {...}, "processSteps": [{ "stepNumber", "stepName", "description", "responsible", "accountable", "consulted", "informed", "inputs", "outputs" }] }. Return ONLY valid JSON. No markdown, no explanation.`;

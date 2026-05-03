@@ -448,6 +448,7 @@ export default function ManualGenerator({
             orgStructure: orgData,
             swimlaneData: swimlaneData,
             processName: swimlaneData?.title || propProcessName,
+            customInstructions: customInstructions.trim() || undefined,
           }),
         });
 
