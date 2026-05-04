@@ -265,7 +265,9 @@ The user has uploaded a flowchart/process diagram image. You MUST:
 5. The image is available for ALL messages in this conversation, so you can reference it in follow-up questions.
 6. You can proactively offer to recreate the flowchart as an editable diagram if the user hasn't asked yet.` : '');
 
-    const anthropicStream = anthropic.messages.stream({
+    // Retry helper for transient Anthropic errors (overloaded, rate limits)
+    const MAX_RETRIES = 3;
+    const startStream = () => anthropic.messages.stream({
       model: 'claude-opus-4-5',
       max_tokens: 16000,
       system: fullSystem,
@@ -277,28 +279,45 @@ The user has uploaded a flowchart/process diagram image. You MUST:
     const encoder = new TextEncoder();
     const readableStream = new ReadableStream({
       async start(controller) {
-        try {
-          for await (const event of anthropicStream) {
-            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-              fullText += event.delta.text;
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: event.delta.text })}\n\n`));
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          try {
+            fullText = '';
+            const anthropicStream = startStream();
+            for await (const event of anthropicStream) {
+              if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                fullText += event.delta.text;
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: event.delta.text })}\n\n`));
+              }
             }
+            // Parse the complete text and send final result
+            const mermaidMatch = fullText.match(/```mermaid\n([\s\S]*?)```/);
+            const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : null;
+            const swimlaneMatch = fullText.match(/```swimlane-json\n([\s\S]*?)```/);
+            let swimlaneData = null;
+            if (swimlaneMatch) {
+              try { swimlaneData = JSON.parse(swimlaneMatch[1].trim()); }
+              catch (e) { console.error('Failed to parse swimlane JSON:', e); }
+            }
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, message: fullText, mermaidCode, swimlaneData })}\n\n`));
+            controller.close();
+            return; // success — exit retry loop
+          } catch (err) {
+            lastErr = err;
+            const errMsg = err instanceof Error ? err.message : String(err);
+            const isRetryable = errMsg.includes('overloaded') || errMsg.includes('rate') || errMsg.includes('529') || errMsg.includes('529');
+            if (isRetryable && attempt < MAX_RETRIES - 1) {
+              const delay = (attempt + 1) * 2000; // 2s, 4s, 6s
+              console.warn(`Anthropic overloaded (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delay}ms...`);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ ping: true })}\n\n`));
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+            console.error('Stream error:', err);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: `Sorry, the AI service is temporarily busy. Please try again in a moment.` })}\n\n`));
+            controller.close();
+            return;
           }
-          // Parse the complete text and send final result
-          const mermaidMatch = fullText.match(/```mermaid\n([\s\S]*?)```/);
-          const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : null;
-          const swimlaneMatch = fullText.match(/```swimlane-json\n([\s\S]*?)```/);
-          let swimlaneData = null;
-          if (swimlaneMatch) {
-            try { swimlaneData = JSON.parse(swimlaneMatch[1].trim()); }
-            catch (e) { console.error('Failed to parse swimlane JSON:', e); }
-          }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, message: fullText, mermaidCode, swimlaneData })}\n\n`));
-          controller.close();
-        } catch (err) {
-          console.error('Stream error:', err);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : 'Stream failed' })}\n\n`));
-          controller.close();
         }
       },
     });
