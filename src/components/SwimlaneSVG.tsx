@@ -1376,7 +1376,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             }]);
             setAddMode(null);
           }
-          if (addMode === 'arrow') { setArrowStart(null); }
+          if (addMode === 'arrow' && arrowStart) { setArrowStart(null); }
         }}
       >
         {/* Title Header */}
@@ -1807,7 +1807,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                 markerEnd={markerEnd}
               />
               {/* Wide transparent hitbox — drag immediately on first touch */}
-              {!isVirtual && (
+              {/* Disabled during arrow creation mode so shape clicks aren't intercepted */}
+              {!isVirtual && addMode !== 'arrow' && (
               <path
                 d={finalPath}
                 fill="none"
@@ -1995,7 +1996,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
               <path d={path} fill="none" stroke="white" strokeWidth="5" />
               {isSelected && <path d={path} fill="none" stroke="#3b82f6" strokeWidth="5" strokeOpacity="0.3" />}
               <path d={path} fill="none" stroke={strokeColor} strokeWidth={isSelected ? "2.5" : "2"} markerEnd={markerEnd} />
-              <path d={path} fill="none" stroke="transparent" strokeWidth="16" style={{ cursor: 'grab' }}
+              {/* Disabled during arrow creation mode so shape clicks aren't intercepted */}
+              {addMode !== 'arrow' && <path d={path} fill="none" stroke="transparent" strokeWidth="16" style={{ cursor: 'grab' }}
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => {
                   e.stopPropagation();
@@ -2010,7 +2012,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
                   }
                   setPendingArrowDrag({ connKey, segmentIdx: best, pathPoints, startMouse: svgPt });
                 }}
-              />
+              />}
               {/* Label badge for Yes/No or custom labels */}
               {conn.label && (
                 <>
