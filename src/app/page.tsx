@@ -10,6 +10,7 @@ import SwimlaneSVG, { SwimlaneData, DiagramEditState } from '@/components/Swimla
 import DiagramVersionHistory from '@/components/DiagramVersionHistory';
 import { supabase, Diagram } from '@/lib/supabase';
 import { jsPDF } from 'jspdf';
+import { downloadDrawioFile } from '@/lib/exportDrawio';
 
 const MermaidDiagram = dynamic(() => import('@/components/MermaidDiagram'), {
   ssr: false,
@@ -369,6 +370,13 @@ export default function Home() {
     }
   }, [svgToCanvas, swimlaneData?.title]);
 
+  // Download flowchart as editable draw.io file
+  const handleDownloadDrawio = useCallback(() => {
+    if (!swimlaneData) { alert('No flowchart to export'); return; }
+    const editState = isExpanded ? expandedEditStateRef.current : mainEditStateRef.current;
+    downloadDrawioFile(swimlaneData, editState, swimlaneData.title || 'Process_Flowchart', { clientLogo, companyLogo });
+  }, [swimlaneData, isExpanded, clientLogo, companyLogo]);
+
   const hasDiagram = swimlaneData || mermaidCode;
 
   return (
@@ -588,6 +596,16 @@ export default function Home() {
                           )}
                           {isDownloading ? 'Downloading...' : 'PDF'}
                         </button>
+                        <button
+                          onClick={handleDownloadDrawio}
+                          className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
+                          title="Download as editable draw.io file"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                          draw.io
+                        </button>
                       </>
                     )}
                     {/* Full View Button */}
@@ -704,6 +722,16 @@ export default function Home() {
                         </svg>
                       )}
                       {isDownloading ? 'Downloading...' : 'PDF'}
+                    </button>
+                    <button
+                      onClick={handleDownloadDrawio}
+                      className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1"
+                      title="Download as editable draw.io file"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      draw.io
                     </button>
                   </>
                 )}
