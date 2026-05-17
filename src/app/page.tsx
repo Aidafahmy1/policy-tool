@@ -11,6 +11,7 @@ import DiagramVersionHistory from '@/components/DiagramVersionHistory';
 import { supabase, Diagram } from '@/lib/supabase';
 import { jsPDF } from 'jspdf';
 import { downloadDrawioFile } from '@/lib/exportDrawio';
+import { downloadExcelFile } from '@/lib/exportExcel';
 
 const MermaidDiagram = dynamic(() => import('@/components/MermaidDiagram'), {
   ssr: false,
@@ -377,6 +378,13 @@ export default function Home() {
     downloadDrawioFile(swimlaneData, editState, swimlaneData.title || 'Process_Flowchart', { clientLogo, companyLogo });
   }, [swimlaneData, isExpanded, clientLogo, companyLogo]);
 
+  // Download flowchart as Visio-compatible Excel file
+  const handleDownloadExcel = useCallback(() => {
+    if (!swimlaneData) { alert('No flowchart to export'); return; }
+    const editState = isExpanded ? expandedEditStateRef.current : mainEditStateRef.current;
+    downloadExcelFile(swimlaneData, editState, swimlaneData.title || 'Process_Flowchart');
+  }, [swimlaneData, isExpanded]);
+
   const hasDiagram = swimlaneData || mermaidCode;
 
   return (
@@ -606,6 +614,16 @@ export default function Home() {
                           </svg>
                           draw.io
                         </button>
+                        <button
+                          onClick={handleDownloadExcel}
+                          className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1 shadow-md"
+                          title="Download as Visio-compatible Excel file"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          Excel
+                        </button>
                       </>
                     )}
                     {/* Full View Button */}
@@ -732,6 +750,16 @@ export default function Home() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
                       draw.io
+                    </button>
+                    <button
+                      onClick={handleDownloadExcel}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1"
+                      title="Download as Visio-compatible Excel file"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      Excel
                     </button>
                   </>
                 )}
