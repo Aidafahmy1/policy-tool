@@ -380,13 +380,34 @@ export default function ManualGenerator({
   const [showPreview, setShowPreview] = useState<'manual' | 'policy' | null>(null);
 
   const handleGenerateManual = async () => {
-    // Check if we have an uploaded image OR a conversation diagram
+    // Check if we have an uploaded image OR a conversation diagram OR visio attachments
     const hasUploadedImage = uploadedImageBase64;
     const hasConversationDiagram = conversationId && mermaidCode;
     
     const hasStructuredData = swimlaneData && swimlaneData.lanes && swimlaneData.lanes.length > 0;
-    if (!hasStructuredData && !hasUploadedImage && !hasConversationDiagram) {
-      setError('Please upload a flowchart image first');
+
+    // Check for Visio file attachments
+    let visioContent: string | null = null;
+    if (conversationId) {
+      const { data: chatAttachments } = await supabase
+        .from('attachments')
+        .select('file_name, file_content')
+        .eq('conversation_id', conversationId);
+
+      if (chatAttachments) {
+        const visioAtt = chatAttachments.find(a => 
+          a.file_name.toLowerCase().endsWith('.vsdx') || a.file_name.toLowerCase().endsWith('.vsd')
+        );
+        if (visioAtt && visioAtt.file_content) {
+          visioContent = visioAtt.file_content;
+        }
+      }
+    }
+
+    const hasVisio = !!visioContent;
+
+    if (!hasStructuredData && !hasUploadedImage && !hasConversationDiagram && !hasVisio) {
+      setError('Please upload a flowchart image or Visio file first');
       return;
     }
 
@@ -394,6 +415,52 @@ export default function ManualGenerator({
     setError(null);
 
     try {
+      // If we have a Visio file but NO structured swimlane data, use the Visio endpoint
+      if (!hasStructuredData && hasVisio) {
+        let orgData = orgStructure;
+        if (!orgData.trim() && conversationId) {
+          const { data: chatAttachments } = await supabase
+            .from('attachments')
+            .select('file_name, file_content')
+            .eq('conversation_id', conversationId);
+
+          if (chatAttachments) {
+            const orgKeywords = ['org', 'structure', 'hierarchy', 'department', 'role', 'position', 'chart', 'raci', 'stakeholder', 'team'];
+            for (const att of chatAttachments) {
+              const nameLC = att.file_name.toLowerCase();
+              const contentLC = (att.file_content || '').toLowerCase().slice(0, 500);
+              const isOrgDoc = orgKeywords.some(kw => nameLC.includes(kw) || contentLC.includes(kw));
+              if (isOrgDoc && att.file_content && !nameLC.endsWith('.vsdx') && !nameLC.endsWith('.vsd')) {
+                orgData += (orgData ? '\n\n' : '') + `--- ${att.file_name} ---\n${att.file_content}`;
+              }
+            }
+          }
+        }
+
+        const response = await fetch('/api/generate-manual-from-visio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            visioContent,
+            customInstructions: customInstructions.trim() || undefined,
+            orgStructure: orgData.trim() || undefined,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          setError(data.error);
+          setIsGenerating(false);
+          return;
+        }
+
+        setManualData(data.manual);
+        setShowPreview('manual');
+        setIsGenerating(false);
+        return;
+      }
+
       // PRIORITY: If we have structured swimlane data, ALWAYS use the conversation path
       // because it force-overwrites step names from the flowchart (guaranteed exact match).
       // Only fall back to image-reading when there's NO structured data.
@@ -762,7 +829,7 @@ export default function ManualGenerator({
             </p>
             <input
               type="file"
-              accept=".txt,.csv,.json,.md,.tsv,.xml,.xlsx,.xls,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp"
+              accept=".txt,.csv,.json,.md,.tsv,.xml,.xlsx,.xls,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.vsdx,.vsd"
               onChange={handleFileUpload}
               className="text-sm"
             />
