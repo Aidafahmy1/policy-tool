@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { supabase, Message, Conversation, Attachment } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 
 interface ChatInterfaceProps {
   conversationId: string | null;
@@ -69,8 +70,52 @@ export default function ChatInterface({
     for (const file of Array.from(files)) {
       const fileExt = file.name.split('.').pop()?.toLowerCase();
       const isExcel = fileExt === 'xlsx' || fileExt === 'xls' || fileExt === 'xlsm' || fileExt === 'xlsb';
+      const isVisio = fileExt === 'vsdx' || fileExt === 'vsd';
 
-      if (isExcel) {
+      if (isVisio) {
+        // Handle Visio files (.vsdx is a ZIP of XML files)
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          let visioContent = `Visio File: ${file.name}\n\n`;
+
+          // Extract page XML files which contain the diagram shapes and connections
+          const pageFiles = Object.keys(zip.files)
+            .filter(name => name.match(/visio\/pages\/page\d+\.xml/i))
+            .sort();
+
+          if (pageFiles.length > 0) {
+            for (const pagePath of pageFiles) {
+              const xml = await zip.files[pagePath].async('text');
+              visioContent += `--- ${pagePath} ---\n${xml}\n\n`;
+            }
+          }
+
+          // Also extract masters (shape definitions)
+          const masterFiles = Object.keys(zip.files)
+            .filter(name => name.match(/visio\/masters\/master/i))
+            .sort();
+          for (const masterPath of masterFiles) {
+            const xml = await zip.files[masterPath].async('text');
+            visioContent += `--- ${masterPath} ---\n${xml}\n\n`;
+          }
+
+          // Fallback: if no page files found, extract all XML files
+          if (pageFiles.length === 0) {
+            for (const [name, zipFile] of Object.entries(zip.files)) {
+              if (!zipFile.dir && name.endsWith('.xml')) {
+                const xml = await zipFile.async('text');
+                visioContent += `--- ${name} ---\n${xml}\n\n`;
+              }
+            }
+          }
+
+          setPendingFiles(prev => [...prev, { name: file.name, content: visioContent }]);
+        } catch (error) {
+          console.error('Error parsing Visio file:', error);
+          alert(`Failed to parse Visio file: ${file.name}. Make sure it's a valid .vsdx file.`);
+        }
+      } else if (isExcel) {
         // Handle Excel files
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -375,7 +420,7 @@ export default function ChatInterface({
             onChange={handleFileUpload}
             className="hidden"
             multiple
-            accept=".txt,.csv,.json,.md,.xlsx,.xls,.xlsm,.xlsb"
+            accept=".txt,.csv,.json,.md,.xlsx,.xls,.xlsm,.xlsb,.vsdx,.vsd"
           />
           <button
             type="button"
