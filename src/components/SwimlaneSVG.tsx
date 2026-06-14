@@ -725,7 +725,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             if (input.trim() === '') {
               setNumberOverrides(prev => ({ ...prev, [stepId]: null }));
             } else {
-              const parsed = parseInt(input.trim(), 10);
+              const parsed = parseFloat(input.trim());
               if (!isNaN(parsed)) {
                 setNumberOverrides(prev => ({ ...prev, [stepId]: parsed }));
               }
@@ -733,8 +733,8 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
           }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <circle cx={badgeX} cy={badgeY} r={8} fill="#047857" stroke="white" strokeWidth="1.5" />
-          <text x={badgeX} y={badgeY + 3} textAnchor="middle" fill="white" fontSize="7" fontFamily="Arial, sans-serif" fontWeight="700">
+          <circle cx={badgeX} cy={badgeY} r={String(num).length > 2 ? 10 : 8} fill="#047857" stroke="white" strokeWidth="1.5" />
+          <text x={badgeX} y={badgeY + 3} textAnchor="middle" fill="white" fontSize={String(num).length > 2 ? "6" : "7"} fontFamily="Arial, sans-serif" fontWeight="700">
             {num}
           </text>
         </g>
@@ -1365,7 +1365,7 @@ const SwimlaneSVG = forwardRef<SVGSVGElement, SwimlaneSVGProps>(
             if (addMode !== 'subprocess') {
               const numStr = prompt('Step number for this shape (leave blank for none):');
               if (numStr !== null && numStr.trim()) {
-                const parsed = parseInt(numStr.trim(), 10);
+                const parsed = parseFloat(numStr.trim());
                 if (!isNaN(parsed)) stepNumber = parsed;
               }
             }
