@@ -190,8 +190,16 @@ When the user uploads an org structure document (org chart, hierarchy, employee 
 
 Be conversational and helpful. Guide the user through building their process step by step.`;
 
-// Increase timeout for AI API calls
+// Increase timeout and body size limit for AI API calls
 export const maxDuration = 120;
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -202,7 +210,8 @@ export async function POST(request: NextRequest) {
     if (attachments && attachments.length > 0) {
       contextMessage = '\n\nContext from uploaded documents:\n';
       for (const att of attachments) {
-        contextMessage += `\n--- ${att.file_name} ---\n${att.file_content}\n`;
+        const content = att.file_content?.length > 50000 ? att.file_content.slice(0, 50000) + '\n...[truncated]' : att.file_content;
+        contextMessage += `\n--- ${att.file_name} ---\n${content}\n`;
       }
     }
 
