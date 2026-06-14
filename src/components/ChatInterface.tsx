@@ -71,8 +71,70 @@ export default function ChatInterface({
       const fileExt = file.name.split('.').pop()?.toLowerCase();
       const isExcel = fileExt === 'xlsx' || fileExt === 'xls' || fileExt === 'xlsm' || fileExt === 'xlsb';
       const isVisio = fileExt === 'vsdx' || fileExt === 'vsd';
+      const isPowerPoint = fileExt === 'pptx' || fileExt === 'ppt';
 
-      if (isVisio) {
+      if (isPowerPoint) {
+        // Handle PowerPoint files (.pptx is a ZIP of XML files)
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          let pptContent = `PowerPoint File: ${file.name}\n\n`;
+
+          // Extract slide XML files which contain the text content
+          const slideFiles = Object.keys(zip.files)
+            .filter(name => name.match(/ppt\/slides\/slide\d+\.xml/i))
+            .sort((a, b) => {
+              const numA = parseInt(a.match(/slide(\d+)/)?.[1] || '0');
+              const numB = parseInt(b.match(/slide(\d+)/)?.[1] || '0');
+              return numA - numB;
+            });
+
+          for (const slidePath of slideFiles) {
+            const xml = await zip.files[slidePath].async('text');
+            // Extract text content from XML by removing tags
+            const textContent = xml
+              .replace(/<a:p[^>]*>/g, '\n')
+              .replace(/<[^>]+>/g, '')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&amp;/g, '&')
+              .replace(/&quot;/g, '"')
+              .replace(/&apos;/g, "'")
+              .replace(/\n{3,}/g, '\n\n')
+              .trim();
+            const slideNum = slidePath.match(/slide(\d+)/)?.[1] || '?';
+            pptContent += `--- Slide ${slideNum} ---\n${textContent}\n\n`;
+          }
+
+          // Also try to extract notes
+          const noteFiles = Object.keys(zip.files)
+            .filter(name => name.match(/ppt\/notesSlides\/notesSlide\d+\.xml/i))
+            .sort();
+          if (noteFiles.length > 0) {
+            pptContent += '\n--- SPEAKER NOTES ---\n';
+            for (const notePath of noteFiles) {
+              const xml = await zip.files[notePath].async('text');
+              const textContent = xml
+                .replace(/<a:p[^>]*>/g, '\n')
+                .replace(/<[^>]+>/g, '')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'")
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+              const noteNum = notePath.match(/notesSlide(\d+)/)?.[1] || '?';
+              pptContent += `Note ${noteNum}: ${textContent}\n\n`;
+            }
+          }
+
+          setPendingFiles(prev => [...prev, { name: file.name, content: pptContent }]);
+        } catch (error) {
+          console.error('Error parsing PowerPoint file:', error);
+          alert(`Failed to parse PowerPoint file: ${file.name}. Make sure it's a valid .pptx file.`);
+        }
+      } else if (isVisio) {
         // Handle Visio files (.vsdx is a ZIP of XML files)
         try {
           const arrayBuffer = await file.arrayBuffer();
@@ -420,7 +482,7 @@ export default function ChatInterface({
             onChange={handleFileUpload}
             className="hidden"
             multiple
-            accept=".txt,.csv,.json,.md,.xlsx,.xls,.xlsm,.xlsb,.vsdx,.vsd"
+            accept=".txt,.csv,.json,.md,.xlsx,.xls,.xlsm,.xlsb,.vsdx,.vsd,.pptx,.ppt"
           />
           <button
             type="button"
