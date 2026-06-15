@@ -71,7 +71,13 @@ export default function ChatInterface({
       const fileExt = file.name.split('.').pop()?.toLowerCase();
       const isExcel = fileExt === 'xlsx' || fileExt === 'xls' || fileExt === 'xlsm' || fileExt === 'xlsb';
       const isVisio = fileExt === 'vsdx' || fileExt === 'vsd';
-      const isPowerPoint = fileExt === 'pptx' || fileExt === 'ppt';
+      const isPowerPoint = fileExt === 'pptx';
+      const isOldPowerPoint = fileExt === 'ppt';
+
+      if (isOldPowerPoint) {
+        alert('Old .ppt format is not supported. Please save the file as .pptx and re-upload.');
+        continue;
+      }
 
       if (isPowerPoint) {
         // Handle PowerPoint files (.pptx is a ZIP of XML files)
