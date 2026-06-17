@@ -223,7 +223,7 @@ export async function POST(request: NextRequest) {
       // Build org structure context (truncate if too long to avoid token limits)
       let orgContext = '';
       if (orgStructure) {
-        const truncatedOrg = orgStructure.length > 30000 ? orgStructure.slice(0, 30000) + '\n...[truncated]' : orgStructure;
+        const truncatedOrg = orgStructure.length > 15000 ? orgStructure.slice(0, 15000) + '\n...[truncated]' : orgStructure;
         orgContext = `\n===== ORGANIZATION STRUCTURE =====\n${truncatedOrg}\n\n`;
         orgContext += `Use ACTUAL role titles from the org structure for RACI assignments (accountable, consulted, informed).\n`;
         orgContext += `Map swimlane roles to the most relevant org structure roles.\n`;
@@ -273,13 +273,13 @@ ${JSON.stringify({
   processScope: "__FILL__",
   stakeholders: extracted.stakeholders,
   authorityMatrixDefinition: {
-    R: "Responsible - The doer(s) who physically execute the task or produce the deliverable.",
-    A: "Accountable - The single owner who is ultimately accountable for the outcome and must approve/sign-off.",
-    C: "Consulted - Two-way communication with stakeholders whose input and feedback directly affects the outcome.",
-    I: "Informed - One-way communication to stakeholders who need to be kept in the loop but do not contribute directly."
+    R: "Responsible",
+    A: "Accountable",
+    C: "Consulted",
+    I: "Informed"
   },
   processSteps: skeleton,
-}, null, 2)}`;
+})}`;
 
       // Helper: stream AI, collect text, parse, and return SSE to keep Vercel alive
       const encoder = new TextEncoder();
@@ -290,7 +290,7 @@ ${JSON.stringify({
         async start(controller) {
           try {
             const aiStream = anthropic.messages.stream({
-              model: 'claude-opus-4-5',
+              model: 'claude-sonnet-4-20250514',
               max_tokens: 16000,
               system: systemPrompt,
               messages: [{ role: 'user', content: userMessage }],
@@ -343,7 +343,9 @@ ${JSON.stringify({
             controller.close();
           } catch (err) {
             console.error('Manual stream error:', err);
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : 'Generation failed' })}\n\n`));
+            const errMsg = err instanceof Error ? err.message : 'Generation failed';
+            console.error('Full error details:', JSON.stringify(err, null, 2));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errMsg })}\n\n`));
             controller.close();
           }
         },
@@ -379,7 +381,7 @@ ${JSON.stringify({
       async start(controller) {
         try {
           const aiStream = anthropic.messages.stream({
-            model: 'claude-opus-4-5',
+            model: 'claude-sonnet-4-20250514',
             max_tokens: 16000,
             system: fallbackPrompt,
             messages: [{ role: 'user', content: contextMessage }],
