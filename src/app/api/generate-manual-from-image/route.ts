@@ -5,6 +5,8 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+export const maxDuration = 120;
+
 // Single-step approach: Extract and generate in one call
 const COMBINED_PROMPT = `READ THIS FLOWCHART IMAGE CAREFULLY. Study every shape, every swimlane label, every arrow, and every connection.
 

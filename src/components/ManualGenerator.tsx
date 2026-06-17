@@ -7,6 +7,32 @@ import { Packer } from 'docx';
 import { generateManualDocument, ManualData } from '@/lib/generateDocx';
 import { generatePolicyDocument, PolicyData } from '@/lib/generatePolicyDocx';
 
+// Resize image to stay within Anthropic's pixel limit (max 1568px on longest side)
+function resizeImageBase64(base64: string, maxDim = 1500): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const { width, height } = img;
+      // If already within limits, return as-is
+      if (width <= maxDim && height <= maxDim) {
+        resolve(base64);
+        return;
+      }
+      const scale = Math.min(maxDim / width, maxDim / height);
+      const newW = Math.round(width * scale);
+      const newH = Math.round(height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = newW;
+      canvas.height = newH;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, newW, newH);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(base64);
+    img.src = base64;
+  });
+}
+
 interface SwimlaneDataType {
   title: string;
   lanes: Array<{
@@ -572,14 +598,18 @@ export default function ManualGenerator({
         setShowPreview('manual');
       } else if (hasUploadedImage) {
         // Fallback: no structured data, use image-reading AI
+        // Resize images to stay within Anthropic's pixel limits
+        const resizedImage = await resizeImageBase64(uploadedImageBase64!);
+        const resizedOrgImage = orgStructureImageBase64 ? await resizeImageBase64(orgStructureImageBase64) : undefined;
+
         const response = await fetch('/api/generate-manual-from-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            imageBase64: uploadedImageBase64,
+            imageBase64: resizedImage,
             customInstructions: customInstructions.trim() || undefined,
             orgStructure: orgStructure.trim() || undefined,
-            orgStructureImageBase64: orgStructureImageBase64 || undefined,
+            orgStructureImageBase64: resizedOrgImage || undefined,
           }),
         });
 
