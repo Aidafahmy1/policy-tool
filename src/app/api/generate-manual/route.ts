@@ -290,7 +290,7 @@ ${JSON.stringify({
         async start(controller) {
           try {
             const aiStream = anthropic.messages.stream({
-              model: 'claude-sonnet-4-20250514',
+              model: 'claude-opus-4-5',
               max_tokens: 16000,
               system: systemPrompt,
               messages: [{ role: 'user', content: userMessage }],
@@ -381,7 +381,7 @@ ${JSON.stringify({
       async start(controller) {
         try {
           const aiStream = anthropic.messages.stream({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-opus-4-5',
             max_tokens: 16000,
             system: fallbackPrompt,
             messages: [{ role: 'user', content: contextMessage }],

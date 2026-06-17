@@ -97,7 +97,7 @@ Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
     const finalContext = context.length > 80000 ? context.slice(0, 80000) + '\n...[truncated]' : context;
 
     const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-5',
       max_tokens: 16000,
       system: systemPrompt,
       messages: [{ role: 'user', content: finalContext }],
