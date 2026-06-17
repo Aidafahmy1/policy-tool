@@ -220,10 +220,11 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Build org structure context
+      // Build org structure context (truncate if too long to avoid token limits)
       let orgContext = '';
       if (orgStructure) {
-        orgContext = `\n===== ORGANIZATION STRUCTURE =====\n${orgStructure}\n\n`;
+        const truncatedOrg = orgStructure.length > 30000 ? orgStructure.slice(0, 30000) + '\n...[truncated]' : orgStructure;
+        orgContext = `\n===== ORGANIZATION STRUCTURE =====\n${truncatedOrg}\n\n`;
         orgContext += `Use ACTUAL role titles from the org structure for RACI assignments (accountable, consulted, informed).\n`;
         orgContext += `Map swimlane roles to the most relevant org structure roles.\n`;
         orgContext += `Use role titles (e.g., "CFO"), not people's names.\n\n`;
@@ -291,7 +292,6 @@ ${JSON.stringify({
             const aiStream = anthropic.messages.stream({
               model: 'claude-opus-4-5',
               max_tokens: 16000,
-              thinking: { type: 'enabled', budget_tokens: 5000 },
               system: systemPrompt,
               messages: [{ role: 'user', content: userMessage }],
             });
@@ -381,7 +381,6 @@ ${JSON.stringify({
           const aiStream = anthropic.messages.stream({
             model: 'claude-opus-4-5',
             max_tokens: 16000,
-            thinking: { type: 'enabled', budget_tokens: 5000 },
             system: fallbackPrompt,
             messages: [{ role: 'user', content: contextMessage }],
           });
