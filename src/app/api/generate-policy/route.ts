@@ -5,7 +5,7 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,7 +44,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (orgStructure) {
-      context += `ORGANIZATION STRUCTURE:\n${orgStructure}\n\n`;
+      const truncatedOrg = orgStructure.length > 15000 ? orgStructure.slice(0, 15000) + '\n...[truncated]' : orgStructure;
+      context += `ORGANIZATION STRUCTURE:\n${truncatedOrg}\n\n`;
     }
 
     if (messages && messages.length > 0) {
@@ -92,11 +93,14 @@ GUIDELINES:
 
 Return ONLY valid JSON. No markdown, no explanation, no code blocks.`;
 
+    // Truncate context if excessively long
+    const finalContext = context.length > 80000 ? context.slice(0, 80000) + '\n...[truncated]' : context;
+
     const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 16000,
       system: systemPrompt,
-      messages: [{ role: 'user', content: context }],
+      messages: [{ role: 'user', content: finalContext }],
     });
     const response = await stream.finalMessage();
 
