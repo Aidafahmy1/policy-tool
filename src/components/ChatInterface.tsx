@@ -27,9 +27,6 @@ export default function ChatInterface({
   const [pendingFiles, setPendingFiles] = useState<{ name: string; content: string }[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const visioInputRef = useRef<HTMLInputElement>(null);
-  const [visioCount, setVisioCount] = useState(0);
-  const MAX_VISIO_FILES = 4;
 
   // Load messages when conversation changes
   useEffect(() => {
@@ -64,84 +61,6 @@ export default function ChatInterface({
       .select('*')
       .eq('conversation_id', conversationId);
     if (data) setAttachments(data);
-  };
-
-  const handleVisioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const visioFiles = Array.from(files).filter(f => {
-      const ext = f.name.split('.').pop()?.toLowerCase();
-      return ext === 'vsdx' || ext === 'vsd';
-    });
-
-    const currentVisioCount = pendingFiles.filter(f => {
-      const ext = f.name.split('.').pop()?.toLowerCase();
-      return ext === 'vsdx' || ext === 'vsd';
-    }).length;
-
-    const allowedCount = MAX_VISIO_FILES - currentVisioCount;
-    if (allowedCount <= 0) {
-      alert(`Maximum ${MAX_VISIO_FILES} Visio files allowed. Remove some to add more.`);
-      return;
-    }
-
-    const filesToProcess = visioFiles.slice(0, allowedCount);
-    if (filesToProcess.length < visioFiles.length) {
-      alert(`Only ${allowedCount} more Visio file(s) allowed. Added first ${filesToProcess.length}.`);
-    }
-
-    for (const file of filesToProcess) {
-      try {
-        const arrayBuffer = await file.arrayBuffer();
-        const zip = await JSZip.loadAsync(arrayBuffer);
-        let visioContent = `Visio File: ${file.name}\n\n`;
-
-        const pageFiles = Object.keys(zip.files)
-          .filter(name => name.match(/visio\/pages\/page\d+\.xml/i))
-          .sort();
-
-        if (pageFiles.length > 0) {
-          for (const pagePath of pageFiles) {
-            const xml = await zip.files[pagePath].async('text');
-            visioContent += `--- ${pagePath} ---\n${xml}\n\n`;
-          }
-        }
-
-        const masterFiles = Object.keys(zip.files)
-          .filter(name => name.match(/visio\/masters\/master/i))
-          .sort();
-        for (const masterPath of masterFiles) {
-          const xml = await zip.files[masterPath].async('text');
-          visioContent += `--- ${masterPath} ---\n${xml}\n\n`;
-        }
-
-        if (pageFiles.length === 0) {
-          for (const [name, zipFile] of Object.entries(zip.files)) {
-            if (!zipFile.dir && name.endsWith('.xml')) {
-              const xml = await zipFile.async('text');
-              visioContent += `--- ${name} ---\n${xml}\n\n`;
-            }
-          }
-        }
-
-        setPendingFiles(prev => [...prev, { name: file.name, content: visioContent }]);
-      } catch (error) {
-        console.error('Error parsing Visio file:', error);
-        alert(`Failed to parse Visio file: ${file.name}. Make sure it's a valid .vsdx file.`);
-      }
-    }
-
-    // Auto-suggest prompt if input is empty
-    if (!input.trim()) {
-      setInput('Based on the attached Visio process diagrams, generate a best practice version of this process as a professional swimlane flowchart. Analyze the existing flows, identify improvements, and produce an optimized process.');
-    }
-
-    // Update visio count
-    setVisioCount(currentVisioCount + filesToProcess.length);
-
-    // Reset input
-    if (visioInputRef.current) visioInputRef.current.value = '';
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -303,6 +222,15 @@ export default function ChatInterface({
         };
         reader.readAsText(file);
       }
+    }
+
+    // Auto-suggest prompt when Visio files are uploaded and input is empty
+    const uploadedVisioFiles = Array.from(files).filter(f => {
+      const ext = f.name.split('.').pop()?.toLowerCase();
+      return ext === 'vsdx' || ext === 'vsd';
+    });
+    if (uploadedVisioFiles.length > 0 && !input.trim()) {
+      setInput('Based on the attached Visio process diagrams, generate a best practice version of this process as a professional swimlane flowchart. Analyze the existing flows, identify improvements, and produce an optimized process.');
     }
   };
 
@@ -467,11 +395,6 @@ export default function ChatInterface({
   };
 
   const removePendingFile = (index: number) => {
-    const removed = pendingFiles[index];
-    const ext = removed?.name.split('.').pop()?.toLowerCase();
-    if (ext === 'vsdx' || ext === 'vsd') {
-      setVisioCount(prev => Math.max(0, prev - 1));
-    }
     setPendingFiles(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -576,14 +499,6 @@ export default function ChatInterface({
             multiple
             accept=".txt,.csv,.json,.md,.xlsx,.xls,.xlsm,.xlsb,.vsdx,.vsd,.pptx,.ppt"
           />
-          <input
-            type="file"
-            ref={visioInputRef}
-            onChange={handleVisioUpload}
-            className="hidden"
-            multiple
-            accept=".vsdx,.vsd"
-          />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -591,22 +506,6 @@ export default function ChatInterface({
             title="Upload context documents"
           >
             📎
-          </button>
-          <button
-            type="button"
-            onClick={() => visioInputRef.current?.click()}
-            className={`px-3 py-2 rounded-lg h-10 text-xs font-medium transition-colors ${
-              visioCount >= MAX_VISIO_FILES
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-[#059669]/10 hover:bg-[#059669]/20 text-[#059669] border border-[#059669]/30'
-            }`}
-            title={`Upload Visio files (${visioCount}/${MAX_VISIO_FILES})`}
-            disabled={visioCount >= MAX_VISIO_FILES}
-          >
-            <span className="flex items-center gap-1">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7" /></svg>
-              Visio ({visioCount}/{MAX_VISIO_FILES})
-            </span>
           </button>
           <textarea
             value={input}
@@ -622,9 +521,9 @@ export default function ChatInterface({
               }
             }}
             placeholder="Describe your process or ask a question..."
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2EAD6D] text-gray-900 resize-none min-h-[40px] max-h-[150px] overflow-y-auto"
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2EAD6D] text-gray-900 resize-none min-h-[80px] max-h-[200px] overflow-y-auto text-sm"
             disabled={isLoading}
-            rows={1}
+            rows={3}
           />
           <button
             type="submit"
