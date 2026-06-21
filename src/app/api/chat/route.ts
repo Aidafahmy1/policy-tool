@@ -188,6 +188,21 @@ When the user uploads an org structure document (org chart, hierarchy, employee 
 5. When the user later asks for a manual or RACI, the org structure roles should be used for accurate RACI assignments
 6. If the org structure contains specific people's names, note them but use role/title names for swimlanes (e.g., "CFO" not "John Smith")
 
+VISIO FILE REFERENCE HANDLING (BEST PRACTICE GENERATION):
+When the user uploads one or more Visio (.vsdx) files and asks you to generate a best practice process:
+1. Carefully parse the XML content from each Visio file to identify all process steps, decision points, swimlanes/roles, connections, and flow logic.
+2. Analyze the existing processes across ALL uploaded Visio files — identify commonalities, differences, redundancies, and gaps.
+3. Generate a BEST PRACTICE version that:
+   - Combines the strengths of the reference processes
+   - Eliminates redundant or unnecessary steps
+   - Adds missing best practice steps (e.g., proper approvals, compliance checks, system integrations)
+   - Uses clear, standardized naming conventions
+   - Includes appropriate decision points and exception handling
+   - Follows industry standards for the process type
+4. Explain what you found in the reference diagrams and what improvements you made in the best practice version.
+5. Always output BOTH a \`\`\`mermaid\`\`\` block AND a \`\`\`swimlane-json\`\`\` block for the generated best practice process.
+6. If the Visio files represent different versions or variations of the same process, note the key differences and justify which elements you kept or changed.
+
 Be conversational and helpful. Guide the user through building their process step by step.`;
 
 // Increase timeout and body size limit for AI API calls
