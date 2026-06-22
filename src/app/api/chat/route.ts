@@ -312,7 +312,50 @@ export async function POST(request: NextRequest) {
     }
 
     const fullSystem = SYSTEM_PROMPT
-      + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nWhen the user asks to modify, update, add, remove, or change steps/connections/labels in the flowchart, you MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes while preserving everything else. Keep the same step IDs for unchanged steps so the layout stays consistent. Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')
+      + (currentSwimlaneData ? `\n\nIMPORTANT — EXISTING FLOWCHART:\nThe user already has a flowchart generated in this conversation. Here is the current swimlane JSON structure:\n\n\`\`\`json\n${JSON.stringify(currentSwimlaneData, null, 2)}\n\`\`\`\n\nFLOWCHART MODIFICATION RULES (STRICTLY ENFORCED):
+When the user asks to modify, update, add, remove, rename, reorder, or swap steps/connections/labels in the flowchart:
+
+1. OUTPUT REQUIRED: You MUST output an updated \`\`\`swimlane-json\`\`\` block (and a matching \`\`\`mermaid\`\`\` block) that incorporates their requested changes.
+
+2. PRESERVE UNCHANGED ELEMENTS: Keep the same step IDs, labels, types, positions, lanes, and connections for ALL steps that the user did NOT ask to change. Do NOT rewrite, rename, or move anything the user didn't mention.
+
+3. RENAME STEPS: When the user says "rename step X to Y" or "change the name of X to Y":
+   - Find the exact step by its current label (case-insensitive match)
+   - Change ONLY the "label" field to the new name
+   - Keep the same ID, type, x position, lane, and all connections intact
+   - Update the matching mermaid block to use the new label
+
+4. SWAP/REORDER STEPS: When the user says "swap step X and step Y" or "move step X before/after step Y":
+   - Swap the x positions of the two steps
+   - Update all connections so the flow order reflects the new sequence
+   - Keep labels, IDs, types, and lanes unchanged (unless explicitly asked)
+   - Recalculate any connections that pointed to/from the swapped steps
+
+5. ADD STEPS: When the user says "add a step called X after Y":
+   - Insert the new step at x = (Y's x) + 1
+   - Shift all subsequent steps' x positions by +1 to make room
+   - Connect the new step into the flow (from Y to new step, from new step to whatever Y previously connected to)
+   - Assign a new unique ID
+
+6. REMOVE STEPS: When the user says "remove step X" or "delete step X":
+   - Remove the step from its lane
+   - Reconnect: whatever connected TO the removed step should now connect to whatever the removed step connected TO (bridge the gap)
+   - Remove any dangling connections
+   - Shift x positions if needed to close gaps
+
+7. MOVE TO DIFFERENT LANE: When the user says "move step X to the Y lane":
+   - Change the step's lane assignment
+   - Keep the same x position, label, type, and connections
+
+8. ACCURACY CHECK: Before outputting, verify:
+   - Every step the user mentioned was changed exactly as requested
+   - No other steps were accidentally renamed, moved, or deleted
+   - All connections still form a valid flow with no orphaned steps
+   - The mermaid block matches the swimlane-json block exactly
+
+9. CONFIRMATION: After making changes, briefly list what you changed (e.g., "Renamed 'Review Request' to 'Evaluate Application'") so the user can verify.
+
+Only regenerate from scratch if the user explicitly asks for a completely new flowchart.` : '')
       + (uploadedImageBase64 ? `\n\nIMPORTANT — UPLOADED FLOWCHART IMAGE:
 The user has uploaded a flowchart/process diagram image. You MUST:
 1. Carefully analyze the image to identify all process steps, decision points, roles/departments (swimlanes), and connections.
