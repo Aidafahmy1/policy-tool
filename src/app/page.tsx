@@ -702,6 +702,7 @@ export default function Home() {
             processName={processName}
             uploadedImageBase64={uploadedImageBase64}
             svgRef={svgDiagramRef}
+            drawioContent={drawioContent}
           />
         </div>
       </div>

@@ -58,6 +58,7 @@ interface ManualGeneratorProps {
   uploadedImageBase64?: string | null;
   processName?: string | null;
   svgRef?: React.RefObject<SVGSVGElement | null>;
+  drawioContent?: { fileName: string; content: string } | null;
 }
 
 // Generate SVG string directly for reliable capture
@@ -393,6 +394,7 @@ export default function ManualGenerator({
   uploadedImageBase64,
   processName: propProcessName,
   svgRef,
+  drawioContent,
 }: ManualGeneratorProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingPolicy, setIsGeneratingPolicy] = useState(false);
@@ -429,6 +431,11 @@ export default function ManualGenerator({
           visioContent = visioAtt.file_content;
         }
       }
+    }
+
+    // Also check for draw.io content passed directly as prop
+    if (!visioContent && drawioContent) {
+      visioContent = drawioContent.content;
     }
 
     const hasVisio = !!visioContent;
