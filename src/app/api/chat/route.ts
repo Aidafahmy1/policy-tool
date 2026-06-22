@@ -385,9 +385,9 @@ The user has uploaded a flowchart/process diagram image. You MUST:
 6. You can proactively offer to recreate the flowchart as an editable diagram if the user hasn't asked yet.` : '');
 
     // Retry helper for transient Anthropic errors (overloaded, rate limits)
-    const MAX_RETRIES = 3;
-    const startStream = () => anthropic.messages.stream({
-      model: 'claude-opus-4-5',
+    const MAX_RETRIES = 4;
+    const startStream = (model: string = 'claude-opus-4-5') => anthropic.messages.stream({
+      model,
       max_tokens: 16000,
       system: fullSystem,
       messages: apiMessages,
@@ -402,7 +402,10 @@ The user has uploaded a flowchart/process diagram image. You MUST:
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
           try {
             fullText = '';
-            const anthropicStream = startStream();
+            // Fall back to Sonnet on last attempt if Opus keeps failing
+            const model = attempt >= MAX_RETRIES - 1 ? 'claude-sonnet-4-20250514' : 'claude-opus-4-5';
+            if (attempt > 0) console.warn(`Retry attempt ${attempt + 1}/${MAX_RETRIES} using ${model}`);
+            const anthropicStream = startStream(model);
             for await (const event of anthropicStream) {
               if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
                 fullText += event.delta.text;
@@ -426,7 +429,7 @@ The user has uploaded a flowchart/process diagram image. You MUST:
             const errMsg = err instanceof Error ? err.message : String(err);
             const isRetryable = errMsg.includes('overloaded') || errMsg.includes('rate') || errMsg.includes('529') || errMsg.includes('529');
             if (isRetryable && attempt < MAX_RETRIES - 1) {
-              const delay = (attempt + 1) * 2000; // 2s, 4s, 6s
+              const delay = (attempt + 1) * 3000; // 3s, 6s, 9s
               console.warn(`Anthropic overloaded (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delay}ms...`);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ ping: true })}\n\n`));
               await new Promise(r => setTimeout(r, delay));
