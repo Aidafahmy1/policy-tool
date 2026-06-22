@@ -11,6 +11,7 @@ interface ChatInterfaceProps {
   onConversationCreated: (id: string) => void;
   uploadedImageBase64?: string | null;
   currentSwimlaneData?: unknown | null;
+  drawioContent?: { fileName: string; content: string } | null;
 }
 
 export default function ChatInterface({ 
@@ -19,6 +20,7 @@ export default function ChatInterface({
   onConversationCreated,
   uploadedImageBase64,
   currentSwimlaneData,
+  drawioContent,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -297,7 +299,7 @@ export default function ChatInterface({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           messages: apiMessages,
-          attachments: [...attachments, ...pendingFiles.map(f => ({ file_name: f.name, file_content: f.content }))],
+          attachments: [...attachments, ...pendingFiles.map(f => ({ file_name: f.name, file_content: f.content })), ...(drawioContent ? [{ file_name: drawioContent.fileName, file_content: drawioContent.content }] : [])],
           uploadedImageBase64: uploadedImageBase64 || undefined,
           currentSwimlaneData: currentSwimlaneData || undefined,
         }),

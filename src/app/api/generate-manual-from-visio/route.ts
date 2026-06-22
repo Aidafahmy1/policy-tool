@@ -7,7 +7,7 @@ const anthropic = new Anthropic({
 
 export const maxDuration = 120;
 
-const VISIO_MANUAL_PROMPT = `You are an expert business process consultant. You have been given the raw XML content extracted from a Microsoft Visio (.vsdx) file. This XML contains process flowchart data including shapes (process steps, decisions, documents, start/end points), connections (arrows), and swimlane information.
+const VISIO_MANUAL_PROMPT = `You are an expert business process consultant. You have been given the raw XML content extracted from a process diagram file (Microsoft Visio .vsdx or draw.io .drawio). This XML contains process flowchart data including shapes (process steps, decisions, documents, start/end points), connections (arrows), and swimlane information.
 
 YOUR TASK: Analyze the Visio XML carefully and generate a process manual in JSON format.
 
@@ -25,6 +25,21 @@ YOUR TASK: Analyze the Visio XML carefully and generate a process manual in JSON
 4. **Masters**: Shape templates that define the type (flowchart shapes, connectors, etc.)
 
 5. **Swimlanes/Containers**: Look for shapes that act as containers or functional bands — these represent departments/roles.
+
+=== HOW TO READ DRAW.IO XML ===
+
+If the content contains <mxGraphModel> or <mxCell> elements, it is a draw.io file:
+1. **Shapes**: <mxCell> elements with vertex="1" are shapes. The "value" attribute is the label text.
+2. **Connections**: <mxCell> elements with edge="1" are arrows/connectors. "source" and "target" attributes reference the connected shape IDs.
+3. **Shape Types**: The "style" attribute indicates the type:
+   - Contains "swimlane" → swimlane/department container
+   - Contains "rhombus" → decision diamond
+   - Contains "ellipse" → start/end shape
+   - Contains "shape=document" or "shape=mxgraph.flowchart.document" → document shape
+   - Contains "shape=mxgraph.flowchart.database" or "shape=cylinder" → database/system
+   - Default rectangle → process step
+4. **Hierarchy**: The "parent" attribute on each cell tells you which swimlane it belongs to. Cells whose parent is a swimlane cell belong to that department.
+5. **Geometry**: <mxGeometry> inside a cell gives x, y, width, height for positioning and flow order.
 
 === GENERATE THIS EXACT JSON ===
 

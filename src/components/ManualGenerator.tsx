@@ -421,9 +421,10 @@ export default function ManualGenerator({
         .eq('conversation_id', conversationId);
 
       if (chatAttachments) {
-        const visioAtt = chatAttachments.find(a => 
-          a.file_name.toLowerCase().endsWith('.vsdx') || a.file_name.toLowerCase().endsWith('.vsd')
-        );
+        const visioAtt = chatAttachments.find(a => {
+          const name = a.file_name.toLowerCase();
+          return name.endsWith('.vsdx') || name.endsWith('.vsd') || name.endsWith('.drawio') || (name.endsWith('.xml') && name.includes('drawio'));
+        });
         if (visioAtt && visioAtt.file_content) {
           visioContent = visioAtt.file_content;
         }
@@ -433,7 +434,7 @@ export default function ManualGenerator({
     const hasVisio = !!visioContent;
 
     if (!hasStructuredData && !hasUploadedImage && !hasConversationDiagram && !hasVisio) {
-      setError('Please upload a flowchart image or Visio file first');
+      setError('Please upload a flowchart image, Visio, or draw.io file first');
       return;
     }
 

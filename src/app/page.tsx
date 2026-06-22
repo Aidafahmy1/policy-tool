@@ -28,6 +28,7 @@ export default function Home() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [processName, setProcessName] = useState<string | null>(null);
   const [uploadedImageBase64, setUploadedImageBase64] = useState<string | null>(null);
+  const [drawioContent, setDrawioContent] = useState<{ fileName: string; content: string } | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [clientLogo, setClientLogo] = useState<string | null>(null);
   const [companyLogo, setCompanyLogo] = useState<string | null>(null);
@@ -213,6 +214,13 @@ export default function Home() {
 
   const handleImageUploaded = (imageBase64: string) => {
     setUploadedImageBase64(imageBase64);
+    setDrawioContent(null);
+    setUploadError(null);
+  };
+
+  const handleDrawioUploaded = (xmlContent: string, fileName: string) => {
+    setDrawioContent({ fileName, content: xmlContent });
+    setUploadedImageBase64(null);
     setUploadError(null);
   };
 
@@ -470,6 +478,7 @@ export default function Home() {
                   onConversationCreated={setConversationId}
                   uploadedImageBase64={uploadedImageBase64}
                   currentSwimlaneData={swimlaneData}
+                  drawioContent={drawioContent}
                 />
               </div>
             </div>
@@ -481,6 +490,7 @@ export default function Home() {
           {/* Image Uploader - for uploading existing flowchart images */}
           <ImageUploader
             onImageUploaded={handleImageUploaded}
+            onDrawioUploaded={handleDrawioUploaded}
             onError={(err) => setUploadError(err)}
           />
           

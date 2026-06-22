@@ -4,17 +4,40 @@ import { useState, useRef } from 'react';
 
 interface ImageUploaderProps {
   onImageUploaded: (imageBase64: string) => void;
+  onDrawioUploaded?: (xmlContent: string, fileName: string) => void;
   onError: (error: string) => void;
 }
 
-export default function ImageUploader({ onImageUploaded, onError }: ImageUploaderProps) {
+export default function ImageUploader({ onImageUploaded, onDrawioUploaded, onError }: ImageUploaderProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [drawioFile, setDrawioFile] = useState<{ name: string; content: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const isDrawio = ext === 'drawio' || (ext === 'xml' && file.name.toLowerCase().includes('drawio'));
+
+    if (isDrawio) {
+      // Handle draw.io files
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const xmlContent = e.target?.result as string;
+        setDrawioFile({ name: file.name, content: xmlContent });
+        setPreviewUrl(null);
+        if (onDrawioUploaded) {
+          onDrawioUploaded(xmlContent, file.name);
+        }
+      };
+      reader.onerror = () => {
+        onError('Failed to read draw.io file');
+      };
+      reader.readAsText(file);
+      return;
+    }
+
     if (!file.type.startsWith('image/')) {
-      onError('Please upload an image file (PNG, JPG, etc.)');
+      onError('Please upload an image file (PNG, JPG, etc.) or a .drawio file');
       return;
     }
 
@@ -23,6 +46,7 @@ export default function ImageUploader({ onImageUploaded, onError }: ImageUploade
     reader.onload = (e) => {
       const imageBase64 = e.target?.result as string;
       setPreviewUrl(imageBase64);
+      setDrawioFile(null);
       // Just pass the image to parent - no analysis needed here
       onImageUploaded(imageBase64);
     };
@@ -60,6 +84,7 @@ export default function ImageUploader({ onImageUploaded, onError }: ImageUploade
 
   const clearImage = () => {
     setPreviewUrl(null);
+    setDrawioFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -71,14 +96,14 @@ export default function ImageUploader({ onImageUploaded, onError }: ImageUploade
         <svg className="w-5 h-5" style={{ color: '#0C3B2E' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
-        Upload Flowchart Image
+        Upload Flowchart
       </h3>
       
       <p className="text-sm text-gray-500 mb-4">
-        Upload an image of your process flowchart and we&apos;ll analyze it to generate a professional manual.
+        Upload a flowchart image or draw.io file and we&apos;ll analyze it to generate a professional manual.
       </p>
 
-      {!previewUrl ? (
+      {!previewUrl && !drawioFile ? (
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}
@@ -95,7 +120,7 @@ export default function ImageUploader({ onImageUploaded, onError }: ImageUploade
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,.drawio,.xml"
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -105,16 +130,38 @@ export default function ImageUploader({ onImageUploaded, onError }: ImageUploade
           </svg>
           
           <p className="text-gray-600 font-medium">
-            {isDragging ? 'Drop image here' : 'Click or drag image to upload'}
+            {isDragging ? 'Drop file here' : 'Click or drag to upload'}
           </p>
           <p className="text-sm text-gray-400 mt-1">
-            PNG, JPG, or other image formats
+            PNG, JPG, or .drawio files
           </p>
+        </div>
+      ) : drawioFile ? (
+        <div className="relative p-4 bg-[#E8F5EE] rounded-lg border border-[#B8E0CC]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-[#059669] flex items-center justify-center">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-800">{drawioFile.name}</p>
+              <p className="text-xs text-gray-500">Draw.io diagram ready — ask in chat to generate a manual</p>
+            </div>
+          </div>
+          <button
+            onClick={clearImage}
+            className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white p-1.5 rounded-full shadow-md"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       ) : (
         <div className="relative">
           <img
-            src={previewUrl}
+            src={previewUrl!}
             alt="Uploaded flowchart"
             className="w-full rounded-lg border border-gray-200"
           />
