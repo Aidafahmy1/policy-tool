@@ -204,10 +204,8 @@ When the user uploads MORE THAN ONE Visio (.vsdx) file, treat this as a BENCHMAR
 6. Always output BOTH a \`\`\`mermaid\`\`\` block AND a \`\`\`swimlane-json\`\`\` block for the generated best practice process.
 7. If the Visio files represent different versions or variations of the same process, note the key differences and justify which elements you kept or changed.
 
-When only ONE Visio file is uploaded, treat it as a single process to analyze, improve, or recreate.
-
-CRITICAL — DECISION POINT LOOP LOGIC:
-Every decision point (diamond shape) in a flowchart MUST follow this pattern:
+DECISION POINT LOOP LOGIC (APPLIES ONLY TO BENCHMARKING — multiple Visio files):
+When generating the best practice process from multiple uploaded Visio files, every decision point (diamond shape) MUST follow this pattern:
 - "Yes" path → continues FORWARD to the next activity/step in the process
 - "No" path → loops BACK to the previous activity that needs to be redone/corrected
 
@@ -216,7 +214,9 @@ This creates proper process loops. For example:
 - "Quality Check Passed?" → Yes → Continue to packaging / No → Return to "Rework/Fix Issue"
 - "Information Complete?" → Yes → Process application / No → Return to "Request Missing Info"
 
-NEVER create a decision where "No" leads to a dead end or skips ahead. The "No" path must ALWAYS loop back to an earlier step where correction/rework happens. This is fundamental to correct process design. The only exception is if "No" explicitly terminates the process (e.g., "Reject Application" → End).
+NEVER create a decision where "No" leads to a dead end or skips ahead in benchmarking mode. The "No" path must ALWAYS loop back to an earlier step where correction/rework happens. The only exception is if "No" explicitly terminates the process (e.g., "Reject Application" → End).
+
+When only ONE Visio file is uploaded (or no Visio files), generate the process normally based on user instructions — decision points follow whatever logic the user specifies or whatever makes sense for the process.
 
 DRAW.IO FILE HANDLING:
 When the user uploads a draw.io (.drawio or .xml) file:
