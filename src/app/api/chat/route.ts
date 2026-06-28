@@ -277,12 +277,27 @@ export async function POST(request: NextRequest) {
   try {
     const { messages, attachments, uploadedImageBase64, currentSwimlaneData } = await request.json();
 
+    // Count Visio files to detect benchmarking mode
+    const visioAttachments = (attachments || []).filter((att: { file_name: string }) => {
+      const name = att.file_name.toLowerCase();
+      return name.endsWith('.vsdx') || name.endsWith('.vsd');
+    });
+    const isBenchmarkingMode = visioAttachments.length >= 2;
+
     // Build context from attachments if any
     let contextMessage = '';
     if (attachments && attachments.length > 0) {
-      contextMessage = '\n\nContext from uploaded documents:\n';
+      // In benchmarking mode, explicitly label it
+      if (isBenchmarkingMode) {
+        contextMessage = `\n\n[BENCHMARKING MODE ACTIVE: ${visioAttachments.length} Visio process files attached. Consolidate these into ONE best practice flowchart.]\n\nUploaded process files:\n`;
+      } else {
+        contextMessage = '\n\nContext from uploaded documents:\n';
+      }
+
+      // Token budget: limit per file based on count to avoid blowing context window
+      const maxPerFile = attachments.length >= 4 ? 25000 : attachments.length >= 2 ? 40000 : 50000;
       for (const att of attachments) {
-        const content = att.file_content?.length > 50000 ? att.file_content.slice(0, 50000) + '\n...[truncated]' : att.file_content;
+        const content = att.file_content?.length > maxPerFile ? att.file_content.slice(0, maxPerFile) + '\n...[truncated]' : att.file_content;
         contextMessage += `\n--- ${att.file_name} ---\n${content}\n`;
       }
     }

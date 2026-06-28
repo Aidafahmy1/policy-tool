@@ -147,38 +147,110 @@ export default function ChatInterface({
         try {
           const arrayBuffer = await file.arrayBuffer();
           const zip = await JSZip.loadAsync(arrayBuffer);
-          let visioContent = `Visio File: ${file.name}\n\n`;
 
           // Extract page XML files which contain the diagram shapes and connections
           const pageFiles = Object.keys(zip.files)
             .filter(name => name.match(/visio\/pages\/page\d+\.xml/i))
             .sort();
 
+          let rawXml = '';
           if (pageFiles.length > 0) {
             for (const pagePath of pageFiles) {
               const xml = await zip.files[pagePath].async('text');
-              visioContent += `--- ${pagePath} ---\n${xml}\n\n`;
+              rawXml += xml + '\n';
             }
-          }
-
-          // Also extract masters (shape definitions)
-          const masterFiles = Object.keys(zip.files)
-            .filter(name => name.match(/visio\/masters\/master/i))
-            .sort();
-          for (const masterPath of masterFiles) {
-            const xml = await zip.files[masterPath].async('text');
-            visioContent += `--- ${masterPath} ---\n${xml}\n\n`;
-          }
-
-          // Fallback: if no page files found, extract all XML files
-          if (pageFiles.length === 0) {
+          } else {
+            // Fallback: extract all XML files
             for (const [name, zipFile] of Object.entries(zip.files)) {
               if (!zipFile.dir && name.endsWith('.xml')) {
                 const xml = await zipFile.async('text');
-                visioContent += `--- ${name} ---\n${xml}\n\n`;
+                rawXml += xml + '\n';
               }
             }
           }
+
+          // Pre-process: extract shapes, connections, and swimlanes into a clean summary
+          const shapes: { id: string; text: string; type: string; masterName: string }[] = [];
+          const connections: { from: string; to: string; label: string }[] = [];
+          const swimlanes: string[] = [];
+
+          // Extract shape data from XML
+          const shapeRegex = /<Shape[^>]*ID=['"](\d+)['"][^>]*(?:NameU=['"]([^'"]*?)['"])?[^>]*(?:Master=['"](\d+)['"])?[^>]*>([\s\S]*?)<\/Shape>/gi;
+          let shapeMatch;
+          while ((shapeMatch = shapeRegex.exec(rawXml)) !== null) {
+            const id = shapeMatch[1];
+            const nameU = shapeMatch[2] || '';
+            const innerXml = shapeMatch[4];
+            
+            // Extract text content
+            const textMatch = innerXml.match(/<Text[^>]*>([\s\S]*?)<\/Text>/i);
+            let text = textMatch ? textMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+            
+            // Determine shape type from NameU or Master reference
+            const lowerName = nameU.toLowerCase();
+            let type = 'process';
+            if (lowerName.includes('decision') || lowerName.includes('diamond')) type = 'decision';
+            else if (lowerName.includes('document')) type = 'document';
+            else if (lowerName.includes('start') || lowerName.includes('terminator') || lowerName.includes('end')) type = 'start/end';
+            else if (lowerName.includes('dynamic connector') || lowerName.includes('connector')) type = 'connector';
+            else if (lowerName.includes('swimlane') || lowerName.includes('functional band') || lowerName.includes('separator')) type = 'swimlane';
+            else if (lowerName.includes('subprocess') || lowerName.includes('sub-process')) type = 'subprocess';
+            
+            if (type === 'swimlane' && text) {
+              swimlanes.push(text);
+            }
+            
+            if (text && type !== 'connector') {
+              shapes.push({ id, text, type, masterName: nameU });
+            }
+            
+            // Check for connections within shape (Connect elements)
+            if (type === 'connector') {
+              const fromMatch = innerXml.match(/<Connect[^>]*FromSheet=['"](\d+)['"][^>]*>/i) || innerXml.match(/<Cell[^>]*N=['"]BeginX['"][^>]*F=['"].*Sheet\.(\d+)/i);
+              const toMatch = innerXml.match(/<Connect[^>]*ToSheet=['"](\d+)['"][^>]*>/i) || innerXml.match(/<Cell[^>]*N=['"]EndX['"][^>]*F=['"].*Sheet\.(\d+)/i);
+              if (fromMatch && toMatch) {
+                connections.push({ from: fromMatch[1], to: toMatch[1], label: text });
+              }
+            }
+          }
+
+          // Also extract connections from top-level Connect elements
+          const connectRegex = /<Connect[^>]*FromSheet=['"](\d+)['"][^>]*ToSheet=['"](\d+)['"][^>]*/gi;
+          let connMatch;
+          while ((connMatch = connectRegex.exec(rawXml)) !== null) {
+            const fromId = connMatch[1];
+            const toId = connMatch[2];
+            // Only add if not a duplicate
+            if (!connections.find(c => c.from === fromId && c.to === toId)) {
+              connections.push({ from: fromId, to: toId, label: '' });
+            }
+          }
+
+          // Build clean summary
+          let visioContent = `=== VISIO FILE: ${file.name} ===\n\n`;
+          
+          if (swimlanes.length > 0) {
+            visioContent += `SWIMLANES/DEPARTMENTS:\n${swimlanes.map(s => `- ${s}`).join('\n')}\n\n`;
+          }
+          
+          visioContent += `PROCESS SHAPES (${shapes.filter(s => s.type !== 'swimlane').length} total):\n`;
+          for (const shape of shapes) {
+            if (shape.type !== 'swimlane') {
+              visioContent += `- [${shape.type.toUpperCase()}] ID:${shape.id} "${shape.text}"\n`;
+            }
+          }
+          
+          visioContent += `\nCONNECTIONS (${connections.length} total):\n`;
+          for (const conn of connections) {
+            const fromShape = shapes.find(s => s.id === conn.from);
+            const toShape = shapes.find(s => s.id === conn.to);
+            const fromLabel = fromShape ? `"${fromShape.text}"` : `Shape#${conn.from}`;
+            const toLabel = toShape ? `"${toShape.text}"` : `Shape#${conn.to}`;
+            visioContent += `- ${fromLabel} → ${toLabel}${conn.label ? ` [${conn.label}]` : ''}\n`;
+          }
+
+          // Also include raw XML as backup (truncated) in case pre-processing missed something
+          visioContent += `\n--- RAW XML (for reference) ---\n${rawXml.substring(0, 30000)}\n`;
 
           setPendingFiles(prev => [...prev, { name: file.name, content: visioContent }]);
         } catch (error) {
@@ -227,12 +299,25 @@ export default function ChatInterface({
     }
 
     // Auto-suggest prompt when Visio files are uploaded and input is empty
-    const uploadedVisioFiles = Array.from(files).filter(f => {
+    // Count ALL pending Visio files (previously uploaded + just uploaded)
+    const newVisioFiles = Array.from(files).filter(f => {
       const ext = f.name.split('.').pop()?.toLowerCase();
       return ext === 'vsdx' || ext === 'vsd';
     });
-    if (uploadedVisioFiles.length > 0 && !input.trim()) {
-      setInput('Based on the attached Visio process diagrams, generate a best practice version of this process as a professional swimlane flowchart. Analyze the existing flows, identify improvements, and produce an optimized process.');
+    const existingVisioFiles = pendingFiles.filter(f => {
+      const ext = f.name.split('.').pop()?.toLowerCase();
+      return ext === 'vsdx' || ext === 'vsd';
+    });
+    const totalVisioCount = newVisioFiles.length + existingVisioFiles.length;
+
+    if (totalVisioCount > 0 && !input.trim()) {
+      if (totalVisioCount >= 2) {
+        // Benchmarking mode: 2+ Visio files
+        setInput('Benchmark these processes and generate one consolidated best practice swimlane flowchart.');
+      } else {
+        // Single Visio file
+        setInput('Analyze this Visio process diagram and generate it as a professional swimlane flowchart.');
+      }
     }
   };
 
